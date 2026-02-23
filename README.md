@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/logo.png" alt="The Dehydrator" width="120" />
-</p>
-
 <h1 align="center">The Dehydrator · 脱水机</h1>
 
 <p align="center">
