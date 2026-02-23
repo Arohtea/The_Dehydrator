@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1E40AF;
+  --color-primary-light: #3B82F6;
+  --color-accent: #F59E0B;
+  --color-bg: #F8FAFC;
+  --color-text: #1E3A8A;
+  --color-text-muted: #475569;
+  --color-border: #E2E8F0;
+  --font-heading: 'Crimson Pro', serif;
+  --font-body: 'Atkinson Hyperlegible', sans-serif;
+}

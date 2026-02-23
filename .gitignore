@@ -1,0 +1,37 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Web_ui
+Web_ui/node_modules/
+Web_ui/dist/
+
+# Business_Service
+Business_Service/target/
+Business_Service/.mvn/
+
+# AI_Service
+__pycache__/
+*.pyc
+AI_Service/.venv/
+AI_Service/venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+!docker/.env
+
+# Logs
+*.log
