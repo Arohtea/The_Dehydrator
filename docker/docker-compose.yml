@@ -148,7 +148,7 @@ services:
     build:
       context: ../Web_ui
     ports:
-      - "80:80"
+      - "9090:80"
     depends_on:
       - business-service
     restart: unless-stopped
