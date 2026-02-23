@@ -74,7 +74,7 @@ docker compose up -d
 
 | 服务 | 地址 | 备注 |
 |------|------|------|
-| Web UI | http://localhost | 主界面 |
+| Web UI | http://localhost:9090 | 主界面 |
 | RabbitMQ 管理台 | http://localhost:15672 | admin / admin |
 | MinIO 控制台 | http://localhost:9001 | admin / 12345678 |
 
