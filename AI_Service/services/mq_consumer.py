@@ -87,7 +87,8 @@ async def _process_message(message: aio_pika.IncomingMessage):
                 f_flaws = executor.submit(detect_logic_flaws, chain, task_id=task_id,
                                           api_key=api_key, model=model)
                 f_valid = executor.submit(cross_validate, chain, task_id=task_id,
-                                          on_progress=report, api_key=api_key, model=model)
+                                          on_progress=report, api_key=api_key, model=model,
+                                          map_workers=map_workers)
                 flaws = f_flaws.result()
                 validation = f_valid.result()
 

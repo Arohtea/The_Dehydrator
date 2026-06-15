@@ -4,16 +4,16 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # 智谱AI
     zhipuai_api_key: str = ""
-    zhipuai_model: str = "glm-4.6"
+    zhipuai_model: str = "glm-5"
     zhipuai_timeout: int =600
 
     # Qdrant
-    qdrant_host: str = "192.168.1.4"
+    qdrant_host: str = "172.20.84.23"
     qdrant_port: int = 6333
     qdrant_collection: str = "dehydrator_docs"
 
     # MinIO
-    minio_endpoint: str = "192.168.1.4:9000"
+    minio_endpoint: str = "172.20.84.23:9000"
     minio_access_key: str = "admin"
     minio_secret_key: str = "12345678"
     minio_bucket: str = "dehydrator"
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     redis_port: int = 6379
 
     # RabbitMQ
-    rabbitmq_host: str = "192.168.1.4"
+    rabbitmq_host: str = "172.20.84.23"
     rabbitmq_port: int = 5672
     rabbitmq_user: str = "admin"
     rabbitmq_password: str = "admin"

@@ -14,6 +14,11 @@ from langchain_core.outputs import ChatGenerationChunk
 
 def _patched_stream(self, messages, stop=None, run_manager=None, **kwargs):
     from config.settings import settings
+
+    def _read_response_text(resp):
+        resp.read()
+        return resp.text
+
     message_dicts, params = self._create_message_dicts(messages, stop)
     payload = {**params, **kwargs, "messages": message_dicts, "stream": True}
     _truncate_params(payload)
@@ -25,10 +30,10 @@ def _patched_stream(self, messages, stop=None, run_manager=None, **kwargs):
         with connect_sse(client, "POST", self.zhipuai_api_base, json=payload) as es:
             resp = es._response
             if resp.status_code != 200:
-                raise ValueError(f"智谱API错误 {resp.status_code}: {resp.text}")
+                raise ValueError(f"智谱API错误 {resp.status_code}: {_read_response_text(resp)}")
             ct = resp.headers.get("content-type", "")
             if "text/event-stream" not in ct:
-                raise ValueError(f"智谱API返回非SSE响应 (Content-Type: {ct}): {resp.text}")
+                raise ValueError(f"智谱API返回非SSE响应 (Content-Type: {ct}): {_read_response_text(resp)}")
             for sse in es.iter_sse():
                 chunk = _json.loads(sse.data)
                 if not chunk["choices"]:

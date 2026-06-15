@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_community.chat_models import ChatZhipuAI
 from config.settings import settings
 from services.vector_store import search_similar
@@ -42,17 +43,34 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
 
 
 def cross_validate(argument_chain: dict, task_id: str = "", on_progress=None,
-                   api_key: str | None = None, model: str | None = None) -> list[dict]:
+                   api_key: str | None = None, model: str | None = None,
+                   map_workers: int | None = None) -> list[dict]:
     claims = []
     for step in argument_chain.get("argument_chain", []):
         claims.append(step.get("claim", ""))
     if not claims and argument_chain.get("main_conclusion"):
         claims = [argument_chain["main_conclusion"]]
-    valid = [c for c in claims if c]
-    total = len(valid) or 1
-    results = []
-    for i, c in enumerate(valid):
-        if on_progress:
-            on_progress(80 + int((i / total) * 15), f"交叉验证 ({i+1}/{total})")
-        results.append(_validate_single_claim(c, task_id, i, api_key, model))
+    valid_claims = [c for c in claims if c]
+    if not valid_claims:
+        return []
+
+    total = len(valid_claims)
+    results = [None] * total
+    completed_count = 0
+    worker_count = max(1, min(map_workers or settings.map_workers, total))
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_validate_single_claim, claim, task_id, i, api_key, model): i
+            for i, claim in enumerate(valid_claims)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
+            completed_count += 1
+            if on_progress:
+                on_progress(
+                    80 + int((completed_count / total) * 15),
+                    f"交叉验证 ({completed_count}/{total})",
+                )
     return results

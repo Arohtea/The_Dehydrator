@@ -61,10 +61,10 @@ async function onSave() {
       </div>
 
       <div class="gs-setting-item opacity-0">
-        <label class="block text-sm font-medium mb-1">并发数</label>
+        <label class="block text-sm font-medium mb-1">分析并发数</label>
         <input v-model.number="form.mapWorkers" type="number" min="1" max="8" placeholder="默认 2"
           class="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary" />
-        <p class="text-xs text-text-muted mt-1">MAP阶段并行提取论据的线程数，越大越快但消耗更多API额度（默认2）</p>
+        <p class="text-xs text-text-muted mt-1">用于论据提取和交叉验证的并发线程数，越大越快但会消耗更多API额度（默认2）</p>
       </div>
 
       <div class="gs-setting-item opacity-0">

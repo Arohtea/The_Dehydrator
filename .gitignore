@@ -12,6 +12,11 @@ Thumbs.db
 # Claude
 .claude/
 CLAUDE.md
+GEMINI.md
+AGENTS.md
+.agent/
+.gemini/
+
 
 # Web_ui
 Web_ui/node_modules/
@@ -32,6 +37,7 @@ docs/
 .env.*
 !.env.example
 !docker/.env
+.ccb/*
 
 # Logs
 *.log
