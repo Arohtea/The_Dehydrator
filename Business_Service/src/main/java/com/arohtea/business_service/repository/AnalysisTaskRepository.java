@@ -7,6 +7,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public interface AnalysisTaskRepository extends JpaRepository<AnalysisTask, String> {
-    List<AnalysisTask> findByDocumentId(String documentId);
+    List<AnalysisTask> findByDocumentIdOrderByCreatedAtAsc(String documentId);
     List<AnalysisTask> findByStatusInAndCreatedAtBefore(List<TaskStatus> statuses, LocalDateTime before);
 }

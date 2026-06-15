@@ -20,6 +20,8 @@ async def upload_document(
     x_api_key: Optional[str] = Header(None),
     x_chunk_size: Optional[int] = Header(None),
     x_chunk_overlap: Optional[int] = Header(None),
+    x_source_type: Optional[str] = Header(None),
+    x_library_id: Optional[str] = Header(None),
 ):
     suffix = Path(file.filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -34,7 +36,16 @@ async def upload_document(
     try:
         text = parse_document(tmp_path)
         chunks = chunk_text(text, chunk_size=x_chunk_size, chunk_overlap=x_chunk_overlap)
-        store_chunks(chunks, doc_id, api_key=x_api_key)
+        source_type = x_source_type or "analysis_document"
+        if source_type == "reference_document" and not x_library_id:
+            raise HTTPException(400, "参考资料上传缺少 X-Library-Id")
+        store_chunks(
+            chunks,
+            doc_id,
+            api_key=x_api_key,
+            source_type=source_type,
+            library_id=x_library_id,
+        )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

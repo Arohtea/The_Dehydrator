@@ -3,6 +3,8 @@ package com.arohtea.business_service.service;
 import com.arohtea.business_service.model.AnalysisTask;
 import com.arohtea.business_service.model.TaskStatus;
 import com.arohtea.business_service.repository.AnalysisTaskRepository;
+import com.arohtea.business_service.repository.ReferenceLibraryRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -16,6 +18,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -26,16 +30,21 @@ public class AnalysisService {
     private final RabbitTemplate rabbitTemplate;
     private final StringRedisTemplate redisTemplate;
     private final SystemSettingsService settingsService;
+    private final ReferenceLibraryRepository referenceLibraryRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private String normalizeMode(String mode) {
         return "quick".equalsIgnoreCase(mode) ? "quick" : "deep";
     }
 
-    public AnalysisTask createTask(String documentId, String aiDocId, String mode) {
+    public AnalysisTask createTask(String documentId, String aiDocId, String mode, List<String> referenceLibraryIds) {
+        List<String> normalizedLibraryIds = normalizeReferenceLibraryIds(referenceLibraryIds);
+        List<String> referenceLibraryNames = resolveReferenceLibraryNames(normalizedLibraryIds);
         AnalysisTask task = new AnalysisTask();
         task.setDocumentId(documentId);
         task.setMode(normalizeMode(mode));
+        task.setReferenceLibraryIds(writeJsonList(normalizedLibraryIds));
+        task.setReferenceLibraryNames(writeJsonList(referenceLibraryNames));
         task.setStatus(TaskStatus.PENDING);
         task = taskRepository.save(task);
 
@@ -46,6 +55,7 @@ public class AnalysisService {
             msg.put("taskId", task.getId());
             msg.put("docId", aiDocId);
             msg.put("mode", task.getMode());
+            msg.set("referenceLibraryIds", objectMapper.valueToTree(normalizedLibraryIds));
             if (settings.getApiKey() != null) msg.put("apiKey", settings.getApiKey());
             if (settings.getModel() != null) msg.put("model", settings.getModel());
             if (settings.getMapWorkers() != null) msg.put("mapWorkers", settings.getMapWorkers());
@@ -69,7 +79,7 @@ public class AnalysisService {
     }
 
     public List<AnalysisTask> getByDocumentId(String documentId) {
-        return taskRepository.findByDocumentId(documentId);
+        return taskRepository.findByDocumentIdOrderByCreatedAtAsc(documentId);
     }
 
     public AnalysisTask cancelTask(String taskId) {
@@ -94,6 +104,41 @@ public class AnalysisService {
             task.setCompletedAt(LocalDateTime.now());
             taskRepository.save(task);
             log.info("超时清理任务: {}", task.getId());
+        }
+    }
+
+    private List<String> normalizeReferenceLibraryIds(List<String> referenceLibraryIds) {
+        if (referenceLibraryIds == null || referenceLibraryIds.isEmpty()) {
+            return List.of();
+        }
+        return referenceLibraryIds.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    private List<String> resolveReferenceLibraryNames(List<String> referenceLibraryIds) {
+        if (referenceLibraryIds.isEmpty()) {
+            return List.of();
+        }
+        var libraries = referenceLibraryRepository.findAllById(referenceLibraryIds).stream()
+                .collect(Collectors.toMap(
+                        library -> library.getId(),
+                        library -> library.getName()
+                ));
+        return referenceLibraryIds.stream()
+                .map(libraries::get)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private String writeJsonList(List<String> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("序列化资料集信息失败", e);
         }
     }
 }

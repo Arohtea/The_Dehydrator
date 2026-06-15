@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { storeToRefs } from 'pinia'
@@ -8,14 +8,21 @@ import gsap from 'gsap'
 
 const router = useRouter()
 const store = useDocumentStore()
-const { documents, loading } = storeToRefs(store)
+const { documents, loading, referenceLibraries } = storeToRefs(store)
 
 const containerRef = ref(null)
 const docPendingDelete = ref(null)
 const deleting = ref(false)
+const analysisDialogVisible = ref(false)
+const analysisTargetDoc = ref(null)
+const analysisMode = ref('deep')
+const selectedLibraryIds = ref([])
+const startingAnalysis = ref(false)
+
+const analysisModeLabel = computed(() => analysisMode.value === 'quick' ? '快速分析' : '深度分析')
 
 onMounted(async () => {
-  await store.fetchDocuments()
+  await Promise.all([store.fetchDocuments(), store.fetchReferenceLibraries()])
   animateItems()
 })
 
@@ -38,13 +45,46 @@ function animateItems() {
   }
 }
 
-async function analyze(doc, mode) {
-  const task = await store.startAnalysis(doc.id, mode)
-  if (task.error) {
-    alert(task.error)
+function openAnalysisDialog(doc, mode) {
+  analysisTargetDoc.value = doc
+  analysisMode.value = mode
+  selectedLibraryIds.value = []
+  analysisDialogVisible.value = true
+}
+
+function toggleLibrarySelection(libraryId) {
+  if (selectedLibraryIds.value.includes(libraryId)) {
+    selectedLibraryIds.value = selectedLibraryIds.value.filter(id => id !== libraryId)
     return
   }
-  router.push(`/documents/${doc.id}`)
+  selectedLibraryIds.value = [...selectedLibraryIds.value, libraryId]
+}
+
+async function confirmStartAnalysis() {
+  if (!analysisTargetDoc.value || startingAnalysis.value) return
+  startingAnalysis.value = true
+  try {
+    const task = await store.startAnalysis(
+      analysisTargetDoc.value.id,
+      analysisMode.value,
+      selectedLibraryIds.value
+    )
+    if (task.error) {
+      alert(task.error)
+      return
+    }
+    analysisDialogVisible.value = false
+    router.push(`/documents/${analysisTargetDoc.value.id}`)
+  } finally {
+    startingAnalysis.value = false
+  }
+}
+
+function cancelStartAnalysis() {
+  if (startingAnalysis.value) return
+  analysisDialogVisible.value = false
+  analysisTargetDoc.value = null
+  selectedLibraryIds.value = []
 }
 
 function askRemove(doc) {
@@ -95,14 +135,14 @@ async function confirmRemove() {
         </div>
         <div class="flex items-center gap-2">
           <button
-            @click.stop="analyze(doc, 'quick')"
+            @click.stop="openAnalysisDialog(doc, 'quick')"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-sm rounded-lg hover:bg-accent/90 transition-colors duration-200 cursor-pointer"
           >
             <Zap class="w-3.5 h-3.5" />
             快速分析
           </button>
           <button
-            @click.stop="analyze(doc, 'deep')"
+            @click.stop="openAnalysisDialog(doc, 'deep')"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm rounded-lg hover:bg-primary-light transition-colors duration-200 cursor-pointer"
           >
             <Telescope class="w-3.5 h-3.5" />
@@ -114,6 +154,75 @@ async function confirmRemove() {
           >
             <Trash2 class="w-3.5 h-3.5" />
             删除
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="analysisDialogVisible"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      @click.self="cancelStartAnalysis"
+    >
+      <div class="w-full max-w-xl rounded-xl border border-border bg-white p-6 shadow-xl">
+        <h2 class="font-heading text-lg font-semibold text-text">{{ analysisModeLabel }}前选择参考资料</h2>
+        <p class="mt-3 text-sm leading-relaxed text-text-muted">
+          当前文档：{{ analysisTargetDoc?.filename }}。可选一个或多个资料集作为交叉验证参考；也可以不选，直接开始分析。
+        </p>
+
+        <div class="mt-5 space-y-3 max-h-80 overflow-y-auto pr-1">
+          <button
+            type="button"
+            @click="selectedLibraryIds = []"
+            class="w-full rounded-lg border border-dashed border-border px-4 py-3 text-left text-sm transition-colors hover:border-primary hover:bg-primary/5"
+            :class="selectedLibraryIds.length === 0 ? 'border-primary bg-primary/5 text-primary' : 'text-text-muted'"
+          >
+            不使用参考资料，直接分析
+          </button>
+
+          <div v-if="referenceLibraries.length === 0" class="rounded-lg border border-border bg-gray-50 px-4 py-6 text-sm text-text-muted">
+            暂无资料集，可先到“资料库”页面创建并上传参考文件。
+          </div>
+
+          <button
+            v-for="library in referenceLibraries"
+            :key="library.id"
+            type="button"
+            @click="toggleLibrarySelection(library.id)"
+            class="w-full rounded-lg border px-4 py-3 text-left transition-colors"
+            :class="selectedLibraryIds.includes(library.id)
+              ? 'border-primary bg-primary/5'
+              : 'border-border hover:border-primary-light hover:bg-gray-50'"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="font-medium text-text">{{ library.name }}</p>
+                <p class="mt-1 text-xs text-text-muted">{{ new Date(library.createdAt).toLocaleString() }}</p>
+              </div>
+              <span
+                class="rounded-full px-2.5 py-1 text-xs"
+                :class="selectedLibraryIds.includes(library.id) ? 'bg-primary text-white' : 'bg-gray-100 text-text-muted'"
+              >
+                {{ selectedLibraryIds.includes(library.id) ? '已选择' : '未选择' }}
+              </span>
+            </div>
+          </button>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            @click="cancelStartAnalysis"
+            :disabled="startingAnalysis"
+            class="rounded-lg border border-border px-4 py-2 text-sm text-text-muted transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmStartAnalysis"
+            :disabled="startingAnalysis"
+            class="rounded-lg bg-primary px-4 py-2 text-sm text-white transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ startingAnalysis ? '启动中...' : `开始${analysisModeLabel}` }}
           </button>
         </div>
       </div>

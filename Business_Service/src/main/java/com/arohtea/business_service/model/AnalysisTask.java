@@ -21,6 +21,12 @@ public class AnalysisTask {
     private String mode = "deep";
 
     @Column(columnDefinition = "TEXT")
+    private String referenceLibraryIds = "[]";
+
+    @Column(columnDefinition = "TEXT")
+    private String referenceLibraryNames = "[]";
+
+    @Column(columnDefinition = "TEXT")
     private String argumentChain;
 
     @Column(columnDefinition = "TEXT")

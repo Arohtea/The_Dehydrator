@@ -122,6 +122,16 @@ function parseJson(str) {
 }
 
 const currentModeLabel = computed(() => modeTextMap[currentTask.value?.mode] || '深度分析')
+
+const referenceLibraryNames = computed(() => {
+  const raw = currentTask.value?.referenceLibraryNames
+  if (!raw) return []
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return []
+  }
+})
 </script>
 
 <template>
@@ -170,6 +180,12 @@ const currentModeLabel = computed(() => modeTextMap[currentTask.value?.mode] || 
       <div v-else-if="currentTask.status === 'FAILED'" class="flex items-center gap-2 mb-6 gs-task-reveal">
         <X class="w-4 h-4 text-red-500" />
         <span class="text-sm font-medium text-red-500">{{ currentModeLabel }}失败</span>
+      </div>
+
+      <div class="mb-6 rounded-lg border border-border bg-white px-4 py-3 text-sm text-text-muted gs-task-reveal">
+        <span class="font-medium text-text">参考资料：</span>
+        <span v-if="referenceLibraryNames.length">{{ referenceLibraryNames.join('、') }}</span>
+        <span v-else>未使用参考资料</span>
       </div>
 
       <!-- Tab 栏 -->

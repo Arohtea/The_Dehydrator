@@ -4,13 +4,16 @@ CROSS_VALIDATION_PROMPT = """你是一位学术事实核查专家。请对以下
 {claim}
 
 本地知识库检索到的相关内容：
-{local_evidence}
+{document_evidence}
+
+参考资料检索到的相关内容：
+{reference_evidence}
 
 联网搜索到的相关内容：
 {web_evidence}
 
 说明：
-{web_evidence_note}
+{mode_note}
 
 请从以下维度进行验证：
 1. 一致性：各来源是否支持该论据
@@ -22,7 +25,8 @@ CROSS_VALIDATION_PROMPT = """你是一位学术事实核查专家。请对以下
   "claim": "原始论据",
   "verification_status": "supported/partially_supported/contradicted/unverifiable",
   "confidence": 0.0-1.0,
-  "local_evidence_summary": "本地知识库证据摘要",
+  "local_evidence_summary": "当前文档知识库证据摘要",
+  "reference_evidence_summary": "参考资料证据摘要",
   "web_evidence_summary": "联网搜索证据摘要",
   "contradictions": ["矛盾点列表"],
   "supplements": ["补充信息列表"],

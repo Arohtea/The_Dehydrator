@@ -23,6 +23,21 @@ public class AiServiceClient {
     @SuppressWarnings("unchecked")
     public String uploadDocument(byte[] fileBytes, String filename,
                                  String apiKey, Integer chunkSize, Integer chunkOverlap) {
+        return uploadDocument(
+                fileBytes,
+                filename,
+                apiKey,
+                chunkSize,
+                chunkOverlap,
+                "analysis_document",
+                null
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public String uploadDocument(byte[] fileBytes, String filename,
+                                 String apiKey, Integer chunkSize, Integer chunkOverlap,
+                                 String sourceType, String libraryId) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(fileBytes) {
             @Override
@@ -36,6 +51,8 @@ public class AiServiceClient {
         if (apiKey != null) headers.set("X-Api-Key", apiKey);
         if (chunkSize != null) headers.set("X-Chunk-Size", chunkSize.toString());
         if (chunkOverlap != null) headers.set("X-Chunk-Overlap", chunkOverlap.toString());
+        if (sourceType != null && !sourceType.isBlank()) headers.set("X-Source-Type", sourceType);
+        if (libraryId != null && !libraryId.isBlank()) headers.set("X-Library-Id", libraryId);
 
         ResponseEntity<Map> resp = restTemplate.exchange(
                 aiServiceUrl + "/api/document/upload",

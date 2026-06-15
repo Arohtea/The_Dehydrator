@@ -64,6 +64,12 @@ public class AnalysisResultListener {
             if (node.has("mode")) {
                 task.setMode(node.get("mode").asText("deep"));
             }
+            if (node.has("referenceLibraryIds")) {
+                task.setReferenceLibraryIds(node.get("referenceLibraryIds").toString());
+            }
+            if (node.has("referenceLibraryNames")) {
+                task.setReferenceLibraryNames(node.get("referenceLibraryNames").toString());
+            }
 
             task.setProgress(100);
             task.setCurrentStep("quick".equals(task.getMode()) ? "快速分析完成" : "深度分析完成");

@@ -92,6 +92,14 @@ const leave = (el, done) => {
             </div>
           </div>
 
+          <div class="px-4 py-3 border-t border-border">
+            <div class="flex items-center gap-1.5 mb-2">
+              <AlertCircle class="w-4 h-4 text-accent" />
+              <span class="text-xs font-medium text-accent">参考资料证据</span>
+            </div>
+            <p class="text-sm text-text-muted leading-relaxed">{{ item.reference_evidence_summary || '未提供参考资料' }}</p>
+          </div>
+
           <!-- 矛盾点 -->
           <div v-if="item.contradictions?.length" class="px-4 py-3 border-t border-border">
             <p class="text-xs font-medium text-red-700 mb-1">矛盾点</p>

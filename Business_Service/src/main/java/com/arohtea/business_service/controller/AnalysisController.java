@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/analysis")
@@ -21,9 +22,14 @@ public class AnalysisController {
     private final DocumentService documentService;
 
     @PostMapping("/start")
-    public ResponseEntity<?> start(@RequestBody Map<String, String> body) {
-        String docId = body.get("documentId");
-        String mode = body.getOrDefault("mode", "deep");
+    public ResponseEntity<?> start(@RequestBody Map<String, Object> body) {
+        String docId = body.get("documentId") instanceof String value ? value : null;
+        String mode = body.get("mode") instanceof String value ? value : "deep";
+        List<String> referenceLibraryIds = extractStringList(body.get("referenceLibraryIds"));
+        if (docId == null || docId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "documentId不能为空"));
+        }
         Document doc = documentService.getById(docId);
         if (doc == null) {
             return ResponseEntity.badRequest()
@@ -34,7 +40,7 @@ public class AnalysisController {
                     .body(Map.of("error", "文档正在向量化，请稍后再试"));
         }
         AnalysisTask task = analysisService.createTask(
-                docId, doc.getAiDocId(), mode);
+                docId, doc.getAiDocId(), mode, referenceLibraryIds);
         return ResponseEntity.ok(task);
     }
 
@@ -62,5 +68,16 @@ public class AnalysisController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(task);
+    }
+
+    private List<String> extractStringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Objects::nonNull)
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .toList();
     }
 }

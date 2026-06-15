@@ -6,6 +6,8 @@ export const useDocumentStore = defineStore('document', () => {
   const documents = ref([])
   const currentTask = ref(null)
   const loading = ref(false)
+  const referenceLibraries = ref([])
+  const referenceDocuments = ref([])
 
   async function fetchDocuments() {
     loading.value = true
@@ -22,8 +24,8 @@ export const useDocumentStore = defineStore('document', () => {
     return data
   }
 
-  async function startAnalysis(documentId, mode) {
-    const { data } = await api.startAnalysis(documentId, mode)
+  async function startAnalysis(documentId, mode, referenceLibraryIds = []) {
+    const { data } = await api.startAnalysis(documentId, mode, referenceLibraryIds)
     currentTask.value = data
     return data
   }
@@ -39,5 +41,55 @@ export const useDocumentStore = defineStore('document', () => {
     documents.value = documents.value.filter(d => d.id !== id)
   }
 
-  return { documents, currentTask, loading, fetchDocuments, upload, removeDocument, startAnalysis, pollTask }
+  async function fetchReferenceLibraries() {
+    const { data } = await api.getReferenceLibraries()
+    referenceLibraries.value = data
+    return data
+  }
+
+  async function createReferenceLibrary(name) {
+    const { data } = await api.createReferenceLibrary(name)
+    referenceLibraries.value = [data, ...referenceLibraries.value]
+    return data
+  }
+
+  async function removeReferenceLibrary(id) {
+    await api.deleteReferenceLibrary(id)
+    referenceLibraries.value = referenceLibraries.value.filter(item => item.id !== id)
+  }
+
+  async function fetchReferenceDocuments(libraryId) {
+    const { data } = await api.getReferenceDocuments(libraryId)
+    referenceDocuments.value = data
+    return data
+  }
+
+  async function uploadReferenceFile(libraryId, file, onProgress) {
+    const { data } = await api.uploadReferenceDocument(libraryId, file, onProgress)
+    return data
+  }
+
+  async function removeReferenceDocument(id) {
+    await api.deleteReferenceDocument(id)
+    referenceDocuments.value = referenceDocuments.value.filter(item => item.id !== id)
+  }
+
+  return {
+    documents,
+    currentTask,
+    loading,
+    referenceLibraries,
+    referenceDocuments,
+    fetchDocuments,
+    upload,
+    removeDocument,
+    startAnalysis,
+    pollTask,
+    fetchReferenceLibraries,
+    createReferenceLibrary,
+    removeReferenceLibrary,
+    fetchReferenceDocuments,
+    uploadReferenceFile,
+    removeReferenceDocument,
+  }
 })

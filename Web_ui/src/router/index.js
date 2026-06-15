@@ -20,6 +20,10 @@ const router = createRouter({
       path: '/settings',
       component: () => import('@/views/SettingsView.vue'),
     },
+    {
+      path: '/reference-libraries',
+      component: () => import('@/views/ReferenceLibraryView.vue'),
+    },
   ],
 })
 

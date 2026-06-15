@@ -2,7 +2,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_community.chat_models import ChatZhipuAI
 from config.settings import settings
-from services.vector_store import search_similar
+from services.vector_store import search_reference_library, search_similar_in_document
 from prompts.cross_validation import CROSS_VALIDATION_PROMPT
 from services.stream_publisher import stream_invoke
 
@@ -25,23 +25,34 @@ def _web_search(query: str, task_id: str, idx: int,
 
 def _validate_single_claim(claim: str, task_id: str, idx: int,
                            api_key: str | None = None, model: str | None = None,
-                           mode: str = "deep") -> dict:
-    local_results = search_similar(claim, top_k=3)
-    local_evidence = "\n".join(r["text"] for r in local_results) or "无相关内容"
+                           mode: str = "deep",
+                           doc_id: str | None = None,
+                           reference_library_ids: list[str] | None = None) -> dict:
+    local_results = search_similar_in_document(claim, top_k=3, doc_id=doc_id)
+    document_evidence = "\n".join(r["text"] for r in local_results) or "无相关内容"
+    reference_results = search_reference_library(claim, reference_library_ids or [], top_k=3)
+    reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
     quick_mode = mode == "quick"
     web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _web_search(claim, task_id, idx, api_key, model)
-    web_evidence_note = "当前为快速分析模式，本次结论仅基于本地知识库检索，不包含联网搜索结果。" if quick_mode else "当前为深度分析模式，需同时参考本地知识库与联网搜索结果。"
+    mode_note = (
+        "当前为快速分析模式，本次结论基于当前文档知识库与参考资料检索，不包含联网搜索结果。"
+        if quick_mode
+        else "当前为深度分析模式，需同时参考当前文档知识库、参考资料检索与联网搜索结果。"
+    )
 
     llm = _get_llm(api_key, model)
     text = stream_invoke(llm, CROSS_VALIDATION_PROMPT.format(
         claim=claim,
-        local_evidence=local_evidence,
+        document_evidence=document_evidence,
+        reference_evidence=reference_evidence,
         web_evidence=web_evidence,
-        web_evidence_note=web_evidence_note,
+        mode_note=mode_note,
     ), task_id, f"cross_validation_{idx}")
     from services import strip_markdown_json
     try:
         result = json.loads(strip_markdown_json(text))
+        if not result.get("reference_evidence_summary"):
+            result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
         if quick_mode and not result.get("web_evidence_summary"):
             result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
         return result
@@ -51,7 +62,9 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
 
 def cross_validate(argument_chain: dict, task_id: str = "", on_progress=None,
                    api_key: str | None = None, model: str | None = None,
-                   map_workers: int | None = None, mode: str = "deep") -> list[dict]:
+                   map_workers: int | None = None, mode: str = "deep",
+                   doc_id: str | None = None,
+                   reference_library_ids: list[str] | None = None) -> list[dict]:
     claims = []
     for step in argument_chain.get("argument_chain", []):
         claims.append(step.get("claim", ""))
@@ -68,7 +81,17 @@ def cross_validate(argument_chain: dict, task_id: str = "", on_progress=None,
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
-            executor.submit(_validate_single_claim, claim, task_id, i, api_key, model, mode): i
+            executor.submit(
+                _validate_single_claim,
+                claim,
+                task_id,
+                i,
+                api_key,
+                model,
+                mode,
+                doc_id,
+                reference_library_ids,
+            ): i
             for i, claim in enumerate(valid_claims)
         }
         for future in as_completed(futures):

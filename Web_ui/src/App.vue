@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
-import { FileText, Upload, List, Settings, Layers, Sparkles } from 'lucide-vue-next'
+import { Upload, List, Settings, Layers, Sparkles, Library } from 'lucide-vue-next'
 import Lenis from '@studio-freight/lenis'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -82,6 +82,10 @@ onUnmounted(() => {
         <RouterLink to="/documents" class="flex items-center gap-1.5 text-sm text-text-muted hover:text-primary transition-colors duration-200 cursor-pointer">
           <List class="w-4 h-4" />
           <span>文档</span>
+        </RouterLink>
+        <RouterLink to="/reference-libraries" class="flex items-center gap-1.5 text-sm text-text-muted hover:text-primary transition-colors duration-200 cursor-pointer">
+          <Library class="w-4 h-4" />
+          <span>资料库</span>
         </RouterLink>
         <RouterLink to="/settings" class="flex items-center gap-1.5 text-sm text-text-muted hover:text-primary transition-colors duration-200 cursor-pointer">
           <Settings class="w-4 h-4" />

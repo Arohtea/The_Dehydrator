@@ -16,8 +16,8 @@ export const getDocument = (id) => api.get(`/documents/${id}`)
 
 export const deleteDocument = (id) => api.delete(`/documents/${id}`)
 
-export const startAnalysis = (documentId, mode) =>
-  api.post('/analysis/start', { documentId, mode })
+export const startAnalysis = (documentId, mode, referenceLibraryIds = []) =>
+  api.post('/analysis/start', { documentId, mode, referenceLibraryIds })
 
 export const getTask = (taskId) => api.get(`/analysis/task/${taskId}`)
 
@@ -30,3 +30,25 @@ export const cancelTask = (taskId) =>
 export const getSettings = () => api.get('/settings')
 
 export const saveSettings = (data) => api.put('/settings', data)
+
+export const getReferenceLibraries = () => api.get('/reference-libraries')
+
+export const createReferenceLibrary = (name) =>
+  api.post('/reference-libraries', { name })
+
+export const deleteReferenceLibrary = (id) =>
+  api.delete(`/reference-libraries/${id}`)
+
+export const getReferenceDocuments = (libraryId) =>
+  api.get(`/reference-libraries/${libraryId}/documents`)
+
+export const uploadReferenceDocument = (libraryId, file, onProgress) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`/reference-libraries/${libraryId}/documents/upload`, form, {
+    onUploadProgress: (e) => onProgress?.(Math.round((e.loaded * 100) / e.total)),
+  })
+}
+
+export const deleteReferenceDocument = (id) =>
+  api.delete(`/reference-documents/${id}`)

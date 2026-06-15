@@ -56,6 +56,10 @@ async def _process_message(message: aio_pika.IncomingMessage):
         task_id = data["taskId"]
         doc_id = data["docId"]
         mode = "quick" if data.get("mode") == "quick" else "deep"
+        reference_library_ids = [
+            item for item in data.get("referenceLibraryIds", [])
+            if isinstance(item, str) and item.strip()
+        ]
         api_key = data.get("apiKey")
         model = data.get("model")
         map_workers = data.get("mapWorkers")
@@ -79,7 +83,8 @@ async def _process_message(message: aio_pika.IncomingMessage):
             results = client.scroll(
                 settings.qdrant_collection,
                 scroll_filter=qmodels.Filter(must=[
-                    qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id))
+                    qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id)),
+                    qmodels.FieldCondition(key="source_type", match=qmodels.MatchValue(value="analysis_document")),
                 ]),
                 limit=1000,
             )
@@ -100,7 +105,9 @@ async def _process_message(message: aio_pika.IncomingMessage):
                                           api_key=api_key, model=model)
                 f_valid = executor.submit(cross_validate, chain, task_id=task_id,
                                           on_progress=report, api_key=api_key, model=model,
-                                          map_workers=map_workers, mode=mode)
+                                          map_workers=map_workers, mode=mode,
+                                          doc_id=doc_id,
+                                          reference_library_ids=reference_library_ids)
                 flaws = f_flaws.result()
                 validation = f_valid.result()
 
