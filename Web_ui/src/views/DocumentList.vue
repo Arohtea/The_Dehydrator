@@ -3,7 +3,7 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { storeToRefs } from 'pinia'
-import { FileText, Play, Trash2 } from 'lucide-vue-next'
+import { FileText, Zap, Telescope, Trash2 } from 'lucide-vue-next'
 import gsap from 'gsap'
 
 const router = useRouter()
@@ -11,6 +11,8 @@ const store = useDocumentStore()
 const { documents, loading } = storeToRefs(store)
 
 const containerRef = ref(null)
+const docPendingDelete = ref(null)
+const deleting = ref(false)
 
 onMounted(async () => {
   await store.fetchDocuments()
@@ -36,8 +38,8 @@ function animateItems() {
   }
 }
 
-async function analyze(doc) {
-  const task = await store.startAnalysis(doc.id)
+async function analyze(doc, mode) {
+  const task = await store.startAnalysis(doc.id, mode)
   if (task.error) {
     alert(task.error)
     return
@@ -45,9 +47,24 @@ async function analyze(doc) {
   router.push(`/documents/${doc.id}`)
 }
 
-async function remove(doc) {
-  if (!confirm(`确定删除「${doc.filename}」？`)) return
-  await store.removeDocument(doc.id)
+function askRemove(doc) {
+  docPendingDelete.value = doc
+}
+
+function cancelRemove() {
+  if (deleting.value) return
+  docPendingDelete.value = null
+}
+
+async function confirmRemove() {
+  if (!docPendingDelete.value || deleting.value) return
+  deleting.value = true
+  try {
+    await store.removeDocument(docPendingDelete.value.id)
+    docPendingDelete.value = null
+  } finally {
+    deleting.value = false
+  }
 }
 </script>
 
@@ -78,18 +95,52 @@ async function remove(doc) {
         </div>
         <div class="flex items-center gap-2">
           <button
-            @click.stop="analyze(doc)"
-            class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm rounded-lg hover:bg-primary-light transition-colors duration-200 cursor-pointer"
+            @click.stop="analyze(doc, 'quick')"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-sm rounded-lg hover:bg-accent/90 transition-colors duration-200 cursor-pointer"
           >
-            <Play class="w-3.5 h-3.5" />
-            分析
+            <Zap class="w-3.5 h-3.5" />
+            快速分析
           </button>
           <button
-            @click.stop="remove(doc)"
+            @click.stop="analyze(doc, 'deep')"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm rounded-lg hover:bg-primary-light transition-colors duration-200 cursor-pointer"
+          >
+            <Telescope class="w-3.5 h-3.5" />
+            深度分析
+          </button>
+          <button
+            @click.stop="askRemove(doc)"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 transition-colors duration-200 cursor-pointer"
           >
             <Trash2 class="w-3.5 h-3.5" />
             删除
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="docPendingDelete"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      @click.self="cancelRemove">
+      <div class="w-full max-w-sm rounded-xl border border-border bg-white p-6 shadow-xl">
+        <h2 class="font-heading text-lg font-semibold text-text">确认删除</h2>
+        <p class="mt-3 text-sm leading-relaxed text-text-muted">
+          确定删除「{{ docPendingDelete.filename }}」？删除后将同时移除文档记录和分析结果。
+        </p>
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            @click="cancelRemove"
+            :disabled="deleting"
+            class="rounded-lg border border-border px-4 py-2 text-sm text-text-muted transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmRemove"
+            :disabled="deleting"
+            class="rounded-lg bg-red-500 px-4 py-2 text-sm text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ deleting ? '删除中...' : '确认删除' }}
           </button>
         </div>
       </div>

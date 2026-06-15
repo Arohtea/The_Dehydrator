@@ -28,9 +28,14 @@ public class AnalysisService {
     private final SystemSettingsService settingsService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AnalysisTask createTask(String documentId, String aiDocId) {
+    private String normalizeMode(String mode) {
+        return "quick".equalsIgnoreCase(mode) ? "quick" : "deep";
+    }
+
+    public AnalysisTask createTask(String documentId, String aiDocId, String mode) {
         AnalysisTask task = new AnalysisTask();
         task.setDocumentId(documentId);
+        task.setMode(normalizeMode(mode));
         task.setStatus(TaskStatus.PENDING);
         task = taskRepository.save(task);
 
@@ -40,6 +45,7 @@ public class AnalysisService {
             ObjectNode msg = objectMapper.createObjectNode();
             msg.put("taskId", task.getId());
             msg.put("docId", aiDocId);
+            msg.put("mode", task.getMode());
             if (settings.getApiKey() != null) msg.put("apiKey", settings.getApiKey());
             if (settings.getModel() != null) msg.put("model", settings.getModel());
             if (settings.getMapWorkers() != null) msg.put("mapWorkers", settings.getMapWorkers());

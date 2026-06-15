@@ -18,6 +18,8 @@ public class AnalysisTask {
     @Enumerated(EnumType.STRING)
     private TaskStatus status = TaskStatus.PENDING;
 
+    private String mode = "deep";
+
     @Column(columnDefinition = "TEXT")
     private String argumentChain;
 

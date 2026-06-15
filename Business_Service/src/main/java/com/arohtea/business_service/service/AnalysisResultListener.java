@@ -61,9 +61,12 @@ public class AnalysisResultListener {
                 task.setCrossValidation(
                         node.get("crossValidation").toString());
             }
+            if (node.has("mode")) {
+                task.setMode(node.get("mode").asText("deep"));
+            }
 
             task.setProgress(100);
-            task.setCurrentStep("分析完成");
+            task.setCurrentStep("quick".equals(task.getMode()) ? "快速分析完成" : "深度分析完成");
             task.setStatus(TaskStatus.COMPLETED);
             task.setCompletedAt(LocalDateTime.now());
             taskRepository.save(task);

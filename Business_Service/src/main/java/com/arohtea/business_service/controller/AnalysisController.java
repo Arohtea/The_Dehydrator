@@ -23,6 +23,7 @@ public class AnalysisController {
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody Map<String, String> body) {
         String docId = body.get("documentId");
+        String mode = body.getOrDefault("mode", "deep");
         Document doc = documentService.getById(docId);
         if (doc == null) {
             return ResponseEntity.badRequest()
@@ -33,7 +34,7 @@ public class AnalysisController {
                     .body(Map.of("error", "文档正在向量化，请稍后再试"));
         }
         AnalysisTask task = analysisService.createTask(
-                docId, doc.getAiDocId());
+                docId, doc.getAiDocId(), mode);
         return ResponseEntity.ok(task);
     }
 

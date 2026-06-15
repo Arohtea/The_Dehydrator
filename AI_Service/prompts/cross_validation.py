@@ -9,6 +9,9 @@ CROSS_VALIDATION_PROMPT = """你是一位学术事实核查专家。请对以下
 联网搜索到的相关内容：
 {web_evidence}
 
+说明：
+{web_evidence_note}
+
 请从以下维度进行验证：
 1. 一致性：各来源是否支持该论据
 2. 矛盾点：是否存在与该论据相反的证据

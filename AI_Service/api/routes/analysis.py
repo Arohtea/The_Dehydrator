@@ -12,6 +12,7 @@ router = APIRouter()
 
 class AnalysisRequest(BaseModel):
     doc_id: str
+    mode: str = "deep"
 
 
 def _get_chunks(doc_id: str) -> list[str]:
@@ -50,5 +51,5 @@ async def cross_validation(req: AnalysisRequest):
     if not chunks:
         return {"error": "未找到该文档的内容"}
     chain = extract_argument_chain(chunks)
-    results = cross_validate(chain)
+    results = cross_validate(chain, mode=req.mode)
     return {"doc_id": req.doc_id, "cross_validation": results}

@@ -22,8 +22,8 @@ export const useDocumentStore = defineStore('document', () => {
     return data
   }
 
-  async function startAnalysis(documentId) {
-    const { data } = await api.startAnalysis(documentId)
+  async function startAnalysis(documentId, mode) {
+    const { data } = await api.startAnalysis(documentId, mode)
     currentTask.value = data
     return data
   }

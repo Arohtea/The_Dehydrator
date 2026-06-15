@@ -5,6 +5,9 @@ import aio_pika
 from config.settings import settings
 
 log = logging.getLogger(__name__)
+_progress_connection = None
+_progress_channel = None
+_progress_exchange = None
 
 
 async def get_connection():
@@ -13,6 +16,21 @@ async def get_connection():
         f"@{settings.rabbitmq_host}:{settings.rabbitmq_port}/",
         heartbeat=600,
     )
+
+
+def _get_progress_exchange():
+    global _progress_connection, _progress_channel, _progress_exchange
+    import pika
+
+    if _progress_connection is None or _progress_connection.is_closed:
+        _progress_connection = pika.BlockingConnection(pika.ConnectionParameters(
+            host=settings.rabbitmq_host,
+            port=settings.rabbitmq_port,
+            credentials=pika.PlainCredentials(settings.rabbitmq_user, settings.rabbitmq_password),
+        ))
+        _progress_channel = _progress_connection.channel()
+        _progress_exchange = "analysis.exchange"
+    return _progress_channel, _progress_exchange
 
 
 async def _publish_failed(task_id: str, error: str):
@@ -37,26 +55,20 @@ async def _process_message(message: aio_pika.IncomingMessage):
         data = json.loads(message.body.decode())
         task_id = data["taskId"]
         doc_id = data["docId"]
+        mode = "quick" if data.get("mode") == "quick" else "deep"
         api_key = data.get("apiKey")
         model = data.get("model")
         map_workers = data.get("mapWorkers")
         log.info("收到分析任务: %s", task_id)
 
         def _run_analysis():
-            import pika
-
             def report(progress: int, step: str):
                 try:
-                    conn = pika.BlockingConnection(pika.ConnectionParameters(
-                        host=settings.rabbitmq_host, port=settings.rabbitmq_port,
-                        credentials=pika.PlainCredentials(settings.rabbitmq_user, settings.rabbitmq_password),
-                    ))
-                    ch = conn.channel()
+                    ch, exchange = _get_progress_exchange()
                     ch.basic_publish(
-                        exchange="analysis.exchange", routing_key="analysis.progress",
+                        exchange=exchange, routing_key="analysis.progress",
                         body=json.dumps({"taskId": task_id, "progress": progress, "currentStep": step}),
                     )
-                    conn.close()
                 except Exception:
                     log.warning("进度上报失败", exc_info=True)
 
@@ -81,24 +93,25 @@ async def _process_message(message: aio_pika.IncomingMessage):
             chain = extract_argument_chain(chunks, task_id=task_id, on_progress=report,
                                            api_key=api_key, model=model, map_workers=map_workers)
 
-            report(70, "正在检测逻辑漏洞 & 交叉验证...")
+            report(70, "正在检测逻辑漏洞 & 快速交叉验证..." if mode == "quick" else "正在检测逻辑漏洞 & 深度交叉验证...")
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=2) as executor:
                 f_flaws = executor.submit(detect_logic_flaws, chain, task_id=task_id,
                                           api_key=api_key, model=model)
                 f_valid = executor.submit(cross_validate, chain, task_id=task_id,
                                           on_progress=report, api_key=api_key, model=model,
-                                          map_workers=map_workers)
+                                          map_workers=map_workers, mode=mode)
                 flaws = f_flaws.result()
                 validation = f_valid.result()
 
-            report(100, "分析完成")
+            report(100, "快速分析完成" if mode == "quick" else "深度分析完成")
             return chain, flaws, validation
 
         chain, flaws, validation = await asyncio.to_thread(_run_analysis)
 
         result = {
             "taskId": task_id,
+            "mode": mode,
             "argumentChain": chain,
             "logicFlaws": flaws,
             "crossValidation": validation,

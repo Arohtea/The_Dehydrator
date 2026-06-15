@@ -22,6 +22,11 @@ const containerRef = ref(null)
 const tabs = ['论据链', '逻辑漏洞', '交叉验证']
 const activeTab = ref(0)
 
+const modeTextMap = {
+  quick: '快速分析',
+  deep: '深度分析',
+}
+
 // 侦听 tab 切换，给切换的内容加个淡入
 watch(activeTab, async () => {
   await nextTick()
@@ -115,6 +120,8 @@ function parseJson(str) {
   if (!str) return null
   try { return JSON.parse(str) } catch { return str }
 }
+
+const currentModeLabel = computed(() => modeTextMap[currentTask.value?.mode] || '深度分析')
 </script>
 
 <template>
@@ -130,7 +137,7 @@ function parseJson(str) {
           <div class="flex items-center gap-2">
             <Loader2 class="w-4 h-4 text-accent animate-spin" />
             <span class="text-sm text-text-muted">
-              {{ currentTask.currentStep || '分析中...' }}
+              {{ currentModeLabel }} · {{ currentTask.currentStep || '分析中...' }}
             </span>
           </div>
           <span class="text-sm font-medium text-accent">
@@ -149,15 +156,20 @@ function parseJson(str) {
         </div>
         <div class="mt-3 flex items-start gap-1.5 text-xs text-text-muted bg-blue-50/50 p-2 rounded-lg border border-blue-100">
           <Info class="w-4 h-4 text-accent shrink-0" />
-          <p>深度分析涉及长文本的多维度提纯与验证，预计耗时 <strong class="text-accent/80 font-medium">5 ~ 20 分钟</strong> 不等。您可离开此页面，后台将持续分析。</p>
+          <p v-if="currentTask.mode === 'quick'">快速分析会跳过联网验证，优先输出本地论据链、逻辑漏洞和交叉验证结果，通常比深度分析更快。</p>
+          <p v-else>深度分析涉及长文本的多维度提纯与验证，包含联网验证，预计耗时 <strong class="text-accent/80 font-medium">5 ~ 20 分钟</strong> 不等。您可离开此页面，后台将持续分析。</p>
         </div>
       </div>
       <div v-else-if="currentTask.status === 'COMPLETED'" class="flex items-center gap-2 mb-6 gs-task-reveal">
-        <span class="text-sm font-medium text-green-600">分析完成</span>
+        <span class="text-sm font-medium text-green-600">{{ currentModeLabel }}完成</span>
       </div>
       <div v-else-if="currentTask.status === 'CANCELLED'" class="flex items-center gap-2 mb-6 gs-task-reveal">
         <X class="w-4 h-4 text-red-500" />
-        <span class="text-sm font-medium text-red-500">分析已取消</span>
+        <span class="text-sm font-medium text-red-500">{{ currentModeLabel }}已取消</span>
+      </div>
+      <div v-else-if="currentTask.status === 'FAILED'" class="flex items-center gap-2 mb-6 gs-task-reveal">
+        <X class="w-4 h-4 text-red-500" />
+        <span class="text-sm font-medium text-red-500">{{ currentModeLabel }}失败</span>
       </div>
 
       <!-- Tab 栏 -->

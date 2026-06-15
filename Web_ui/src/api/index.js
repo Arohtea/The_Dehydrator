@@ -16,8 +16,8 @@ export const getDocument = (id) => api.get(`/documents/${id}`)
 
 export const deleteDocument = (id) => api.delete(`/documents/${id}`)
 
-export const startAnalysis = (documentId) =>
-  api.post('/analysis/start', { documentId })
+export const startAnalysis = (documentId, mode) =>
+  api.post('/analysis/start', { documentId, mode })
 
 export const getTask = (taskId) => api.get(`/analysis/task/${taskId}`)
 
