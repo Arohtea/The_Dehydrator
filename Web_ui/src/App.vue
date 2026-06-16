@@ -1,6 +1,6 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
-import { RouterLink, RouterView } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { Upload, List, Settings, Layers, Sparkles, Library } from 'lucide-vue-next'
 import Lenis from '@studio-freight/lenis'
 import gsap from 'gsap'
@@ -10,7 +10,12 @@ gsap.registerPlugin(ScrollTrigger)
 
 const navRef = ref(null)
 const mainRef = ref(null)
+const route = useRoute()
 let lenis = null
+
+const mainWidthClass = computed(() =>
+  route.path === '/reference-libraries' ? 'max-w-[1600px]' : 'max-w-5xl'
+)
 
 onMounted(() => {
   // 1. 初始化 Lenis 平滑滚动
@@ -93,7 +98,11 @@ onUnmounted(() => {
         </RouterLink>
       </div>
     </nav>
-    <main ref="mainRef" class="pt-26 px-4 pb-8 max-w-5xl mx-auto opacity-0">
+    <main
+      ref="mainRef"
+      class="pt-26 mx-auto px-4 pb-8 opacity-0"
+      :class="mainWidthClass"
+    >
       <RouterView v-slot="{ Component }">
         <Transition name="page" mode="out-in">
           <component :is="Component" />
