@@ -9,6 +9,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -19,6 +20,13 @@ public class AiServiceClient {
 
     @Value("${ai-service.url}")
     private String aiServiceUrl;
+
+    public record ArchiveReferenceResult(
+            String docId,
+            String folderName,
+            String categoryName,
+            Double confidence
+    ) {}
 
     @SuppressWarnings("unchecked")
     public String uploadDocument(byte[] fileBytes, String filename,
@@ -65,5 +73,47 @@ public class AiServiceClient {
 
     public void deleteDocument(String aiDocId) {
         restTemplate.delete(aiServiceUrl + "/api/document/" + aiDocId);
+    }
+
+    @SuppressWarnings("unchecked")
+    public ArchiveReferenceResult archiveReferenceDocument(String docId,
+                                                          String libraryId,
+                                                          String filename,
+                                                          List<String> folderCandidates,
+                                                          List<String> categoryCandidates,
+                                                          String apiKey,
+                                                          String model) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (apiKey != null) headers.set("X-Api-Key", apiKey);
+        if (model != null) headers.set("X-Model", model);
+
+        Map<String, Object> body = Map.of(
+                "libraryId", libraryId,
+                "filename", filename,
+                "folderCandidates", folderCandidates,
+                "categoryCandidates", categoryCandidates
+        );
+
+        ResponseEntity<Map> resp = restTemplate.exchange(
+                aiServiceUrl + "/api/document/" + docId + "/archive-reference",
+                HttpMethod.POST,
+                new HttpEntity<>(body, headers),
+                Map.class
+        );
+        Map<String, Object> result = resp.getBody();
+        return new ArchiveReferenceResult(
+                result == null ? null : (String) result.get("doc_id"),
+                result == null ? null : (String) result.get("folder_name"),
+                result == null ? null : (String) result.get("category_name"),
+                toDouble(result == null ? null : result.get("confidence"))
+        );
+    }
+
+    private Double toDouble(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        return null;
     }
 }

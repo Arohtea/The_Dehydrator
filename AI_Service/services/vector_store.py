@@ -34,20 +34,7 @@ def ensure_collection(vector_size: int = 2048):
 
 
 def _analysis_document_filter(doc_id: str | None = None) -> models.Filter:
-    must = [
-        models.FieldCondition(
-            key="source_type",
-            match=models.MatchValue(value="analysis_document"),
-        )
-    ]
-    if doc_id:
-        must.append(
-            models.FieldCondition(
-                key="doc_id",
-                match=models.MatchValue(value=doc_id),
-            )
-        )
-    return models.Filter(must=must)
+    return _document_filter("analysis_document", doc_id=doc_id)
 
 
 def _reference_document_filter(library_ids: list[str]) -> models.Filter:
@@ -61,6 +48,30 @@ def _reference_document_filter(library_ids: list[str]) -> models.Filter:
             match=models.MatchAny(any=library_ids),
         ),
     ])
+
+
+def _document_filter(source_type: str, doc_id: str | None = None, library_id: str | None = None) -> models.Filter:
+    must = [
+        models.FieldCondition(
+            key="source_type",
+            match=models.MatchValue(value=source_type),
+        )
+    ]
+    if doc_id:
+        must.append(
+            models.FieldCondition(
+                key="doc_id",
+                match=models.MatchValue(value=doc_id),
+            )
+        )
+    if library_id:
+        must.append(
+            models.FieldCondition(
+                key="library_id",
+                match=models.MatchValue(value=library_id),
+            )
+        )
+    return models.Filter(must=must)
 
 
 def store_chunks(
@@ -99,6 +110,45 @@ def delete_by_doc_id(doc_id: str):
             ])
         ),
     )
+
+
+def get_document_points(doc_id: str, source_type: str = "analysis_document", with_vectors: bool = False):
+    ensure_collection()
+    client = get_client()
+    points, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=_document_filter(source_type, doc_id=doc_id),
+        limit=1000,
+        with_payload=True,
+        with_vectors=with_vectors,
+    )
+    return points
+
+
+def clone_analysis_document_to_reference(doc_id: str, library_id: str) -> tuple[str, list[str]]:
+    ensure_collection()
+    client = get_client()
+    points = get_document_points(doc_id, source_type="analysis_document", with_vectors=True)
+    if not points:
+        raise ValueError("未找到可归档的分析文档向量")
+
+    new_doc_id = str(uuid.uuid4())
+    cloned_points = []
+    texts = []
+    for point in points:
+        payload = dict(point.payload or {})
+        texts.append(payload.get("text", ""))
+        payload["doc_id"] = new_doc_id
+        payload["source_type"] = "reference_document"
+        payload["library_id"] = library_id
+        cloned_points.append(models.PointStruct(
+            id=str(uuid.uuid4()),
+            vector=point.vector,
+            payload=payload,
+        ))
+
+    client.upsert(settings.qdrant_collection, cloned_points)
+    return new_doc_id, texts
 
 
 def search_similar(query: str, top_k: int = 5) -> list[dict]:

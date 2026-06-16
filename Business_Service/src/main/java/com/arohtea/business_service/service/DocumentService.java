@@ -7,7 +7,6 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.BucketExistsArgs;
 import io.minio.MakeBucketArgs;
-import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -30,6 +29,7 @@ public class DocumentService {
     private final MinioClient minioClient;
     private final AiServiceClient aiServiceClient;
     private final SystemSettingsService settingsService;
+    private final ReferenceArchiveService referenceArchiveService;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -52,8 +52,8 @@ public class DocumentService {
         doc.setMinioPath(path);
         doc.setFileSize(file.getSize());
         Document saved = documentRepository.save(doc);
+        referenceArchiveService.createAnalysisMirror(saved);
 
-        // 异步调用AI_Service解析、分块、向量化
         String docId = saved.getId();
         var settings = settingsService.get();
         CompletableFuture.runAsync(() -> {
@@ -61,8 +61,15 @@ public class DocumentService {
                 String aiDocId = aiServiceClient.uploadDocument(
                         fileBytes, file.getOriginalFilename(),
                         settings.getApiKey(), settings.getChunkSize(), settings.getChunkOverlap());
-                saved.setAiDocId(aiDocId);
-                documentRepository.save(saved);
+                Document current = documentRepository.findById(docId).orElse(null);
+                if (current == null) {
+                    aiServiceClient.deleteDocument(aiDocId);
+                    log.info("文档已删除，回收分析向量: {} -> {}", docId, aiDocId);
+                    return;
+                }
+                current.setAiDocId(aiDocId);
+                documentRepository.save(current);
+                referenceArchiveService.finalizeAnalysisMirror(current, settings);
                 log.info("文档向量化完成: {} -> {}", docId, aiDocId);
             } catch (Exception e) {
                 log.error("文档向量化失败: {}", docId, e);
@@ -82,22 +89,7 @@ public class DocumentService {
 
     @Transactional
     public void delete(String id) throws Exception {
-        Document doc = documentRepository.findById(id).orElse(null);
-        if (doc == null) return;
-        String minioPath = doc.getMinioPath();
-        String aiDocId = doc.getAiDocId();
-        // 先删数据库，避免和异步线程冲突
-        documentRepository.deleteById(id);
-        documentRepository.flush();
-        // 再删外部资源
-        try {
-            minioClient.removeObject(RemoveObjectArgs.builder()
-                    .bucket(bucket).object(minioPath).build());
-        } catch (Exception e) { log.warn("删除MinIO文件失败: {}", e.getMessage()); }
-        if (aiDocId != null) {
-            try { aiServiceClient.deleteDocument(aiDocId); }
-            catch (Exception e) { log.warn("删除向量失败: {}", e.getMessage()); }
-        }
+        referenceArchiveService.deleteSourceDocumentWithMirrors(id);
     }
 
     private void ensureBucket() throws Exception {

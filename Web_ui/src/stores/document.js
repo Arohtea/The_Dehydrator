@@ -8,6 +8,8 @@ export const useDocumentStore = defineStore('document', () => {
   const loading = ref(false)
   const referenceLibraries = ref([])
   const referenceDocuments = ref([])
+  const referenceFolders = ref([])
+  const referenceCategories = ref([])
 
   async function fetchDocuments() {
     loading.value = true
@@ -58,9 +60,18 @@ export const useDocumentStore = defineStore('document', () => {
     referenceLibraries.value = referenceLibraries.value.filter(item => item.id !== id)
   }
 
-  async function fetchReferenceDocuments(libraryId) {
+  async function fetchReferenceDocuments(libraryId, options = {}) {
+    const { commit = true } = options
     const { data } = await api.getReferenceDocuments(libraryId)
-    referenceDocuments.value = data
+    if (commit) {
+      referenceDocuments.value = data
+    }
+    return data
+  }
+
+  async function updateReferenceDocument(id, payload) {
+    const { data } = await api.updateReferenceDocument(id, payload)
+    referenceDocuments.value = referenceDocuments.value.map(item => item.id === id ? data : item)
     return data
   }
 
@@ -74,12 +85,66 @@ export const useDocumentStore = defineStore('document', () => {
     referenceDocuments.value = referenceDocuments.value.filter(item => item.id !== id)
   }
 
+  async function fetchReferenceFolders(libraryId, options = {}) {
+    const { commit = true } = options
+    const { data } = await api.getReferenceFolders(libraryId)
+    if (commit) {
+      referenceFolders.value = data
+    }
+    return data
+  }
+
+  async function createReferenceFolder(libraryId, name) {
+    const { data } = await api.createReferenceFolder(libraryId, name)
+    referenceFolders.value = [...referenceFolders.value, data]
+    return data
+  }
+
+  async function updateReferenceFolder(id, name) {
+    const { data } = await api.updateReferenceFolder(id, name)
+    referenceFolders.value = referenceFolders.value.map(item => item.id === id ? data : item)
+    return data
+  }
+
+  async function removeReferenceFolder(id) {
+    await api.deleteReferenceFolder(id)
+    referenceFolders.value = referenceFolders.value.filter(item => item.id !== id)
+  }
+
+  async function fetchReferenceCategories(libraryId, options = {}) {
+    const { commit = true } = options
+    const { data } = await api.getReferenceCategories(libraryId)
+    if (commit) {
+      referenceCategories.value = data
+    }
+    return data
+  }
+
+  async function createReferenceCategory(libraryId, name) {
+    const { data } = await api.createReferenceCategory(libraryId, name)
+    referenceCategories.value = [...referenceCategories.value, data]
+    return data
+  }
+
+  async function updateReferenceCategory(id, name) {
+    const { data } = await api.updateReferenceCategory(id, name)
+    referenceCategories.value = referenceCategories.value.map(item => item.id === id ? data : item)
+    return data
+  }
+
+  async function removeReferenceCategory(id) {
+    await api.deleteReferenceCategory(id)
+    referenceCategories.value = referenceCategories.value.filter(item => item.id !== id)
+  }
+
   return {
     documents,
     currentTask,
     loading,
     referenceLibraries,
     referenceDocuments,
+    referenceFolders,
+    referenceCategories,
     fetchDocuments,
     upload,
     removeDocument,
@@ -89,7 +154,16 @@ export const useDocumentStore = defineStore('document', () => {
     createReferenceLibrary,
     removeReferenceLibrary,
     fetchReferenceDocuments,
+    updateReferenceDocument,
     uploadReferenceFile,
     removeReferenceDocument,
+    fetchReferenceFolders,
+    createReferenceFolder,
+    updateReferenceFolder,
+    removeReferenceFolder,
+    fetchReferenceCategories,
+    createReferenceCategory,
+    updateReferenceCategory,
+    removeReferenceCategory,
   }
 })

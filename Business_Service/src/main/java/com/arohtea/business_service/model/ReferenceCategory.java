@@ -1,37 +1,30 @@
 package com.arohtea.business_service.model;
 
-import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 @Data
 @Entity
-@Table(name = "reference_documents")
-public class ReferenceDocument {
+@Table(
+        name = "reference_categories",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"libraryId", "name"})
+)
+public class ReferenceCategory {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
     private String libraryId;
-    private String filename;
-    private String displayName;
-    private String folderId;
-    private String categoryId;
-    private String sourceDocumentId;
-    private String minioPath;
-    private Long fileSize;
-
-    @Column(columnDefinition = "TEXT")
-    private String aiDocId;
-
+    private String name;
     private LocalDateTime createdAt;
 
     @PrePersist

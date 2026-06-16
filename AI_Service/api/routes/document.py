@@ -4,14 +4,23 @@ from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Header
 from typing import Optional
+from pydantic import BaseModel
 
 from services.document_parser import parse_document
 from services.chunking import chunk_text
 from services.vector_store import store_chunks, delete_by_doc_id
+from services.reference_archive import archive_reference_document
 
 router = APIRouter()
 
 ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt"}
+
+
+class ArchiveReferenceRequest(BaseModel):
+    libraryId: str
+    filename: str
+    folderCandidates: list[str] = []
+    categoryCandidates: list[str] = []
 
 
 @router.post("/upload")
@@ -61,3 +70,24 @@ async def upload_document(
 async def delete_document(doc_id: str):
     delete_by_doc_id(doc_id)
     return {"ok": True}
+
+
+@router.post("/{doc_id}/archive-reference")
+async def archive_reference(
+    doc_id: str,
+    req: ArchiveReferenceRequest,
+    x_api_key: Optional[str] = Header(None),
+    x_model: Optional[str] = Header(None),
+):
+    try:
+        return archive_reference_document(
+            doc_id=doc_id,
+            library_id=req.libraryId,
+            filename=req.filename,
+            folder_candidates=req.folderCandidates,
+            category_candidates=req.categoryCandidates,
+            api_key=x_api_key,
+            model=x_model,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))

@@ -59,7 +59,7 @@ async function handleUpload(file) {
 <template>
   <div ref="container" class="flex flex-col items-center justify-center min-h-[60vh]">
     <h1 class="font-heading text-3xl font-bold mb-2 opacity-0 gs-reveal">上传研报 / 论文</h1>
-    <p class="text-text-muted mb-8 opacity-0 gs-reveal">支持 PDF、DOCX、TXT，AI 自动提取论据链并交叉验证</p>
+    <p class="text-text-muted mb-8 opacity-0 gs-reveal">支持 PDF、DOCX、TXT，分析上传后会自动进入分析论文资料库，并由 AI 完成初步归类</p>
 
     <label
       class="w-full max-w-lg border-2 border-dashed rounded-xl p-12 flex flex-col items-center gap-4 cursor-pointer transition-colors duration-200 opacity-0 gs-reveal"
