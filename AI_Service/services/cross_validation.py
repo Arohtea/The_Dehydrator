@@ -2,7 +2,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_community.chat_models import ChatZhipuAI
 from config.settings import settings
-from services.vector_store import search_reference_library, search_similar_in_document
+from services.vector_store import search_reference_library
 from prompts.cross_validation import CROSS_VALIDATION_PROMPT
 from services.stream_publisher import stream_invoke
 
@@ -28,29 +28,39 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
                            mode: str = "deep",
                            doc_id: str | None = None,
                            reference_library_ids: list[str] | None = None) -> dict:
-    local_results = search_similar_in_document(claim, top_k=3, doc_id=doc_id)
-    document_evidence = "\n".join(r["text"] for r in local_results) or "无相关内容"
+    quick_mode = mode == "quick"
+    document_evidence_label = "模型自身知识判断要求"
+    document_evidence = (
+        "请基于你已有的通用学术知识判断该论据，不要把当前上传论文当作验证依据。"
+        "若参考资料或联网搜索提供了额外信息，可以一并纳入判断。"
+    )
+    local_evidence_summary_hint = "模型知识摘要"
     reference_results = search_reference_library(claim, reference_library_ids or [], top_k=3)
     reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
-    quick_mode = mode == "quick"
     web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _web_search(claim, task_id, idx, api_key, model)
     mode_note = (
-        "当前为快速分析模式，本次结论基于当前文档知识库与参考资料检索，不包含联网搜索结果。"
+        "当前为快速分析模式：只能基于模型自身知识与可选参考资料判断，"
+        "禁止把当前上传论文内容当作验证证据，不执行联网搜索。"
         if quick_mode
-        else "当前为深度分析模式，需同时参考当前文档知识库、参考资料检索与联网搜索结果。"
+        else "当前为深度分析模式：需同时参考模型自身知识、可选参考资料检索与联网搜索结果，"
+             "禁止把当前上传论文内容当作验证证据。"
     )
 
     llm = _get_llm(api_key, model)
     text = stream_invoke(llm, CROSS_VALIDATION_PROMPT.format(
         claim=claim,
+        document_evidence_label=document_evidence_label,
         document_evidence=document_evidence,
         reference_evidence=reference_evidence,
         web_evidence=web_evidence,
         mode_note=mode_note,
+        local_evidence_summary_hint=local_evidence_summary_hint,
     ), task_id, f"cross_validation_{idx}")
     from services import strip_markdown_json
     try:
         result = json.loads(strip_markdown_json(text))
+        if not result.get("local_evidence_summary"):
+            result["local_evidence_summary"] = "已基于模型自身通用知识进行判断"
         if not result.get("reference_evidence_summary"):
             result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
         if quick_mode and not result.get("web_evidence_summary"):

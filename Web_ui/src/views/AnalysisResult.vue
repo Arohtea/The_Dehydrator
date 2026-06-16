@@ -166,8 +166,8 @@ const referenceLibraryNames = computed(() => {
         </div>
         <div class="mt-3 flex items-start gap-1.5 text-xs text-text-muted bg-blue-50/50 p-2 rounded-lg border border-blue-100">
           <Info class="w-4 h-4 text-accent shrink-0" />
-          <p v-if="currentTask.mode === 'quick'">快速分析会跳过联网验证，优先输出本地论据链、逻辑漏洞和交叉验证结果，通常比深度分析更快。</p>
-          <p v-else>深度分析涉及长文本的多维度提纯与验证，包含联网验证，预计耗时 <strong class="text-accent/80 font-medium">5 ~ 20 分钟</strong> 不等。您可离开此页面，后台将持续分析。</p>
+          <p v-if="currentTask.mode === 'quick'">快速分析会跳过联网验证，交叉验证基于模型自身知识和可选参考资料进行判断，不会用当前论文验证当前论文。</p>
+          <p v-else>深度分析会结合模型自身知识、可选参考资料与联网搜索进行交叉验证，预计耗时 <strong class="text-accent/80 font-medium">5 ~ 20 分钟</strong> 不等。您可离开此页面，后台将持续分析。</p>
         </div>
       </div>
       <div v-else-if="currentTask.status === 'COMPLETED'" class="flex items-center gap-2 mb-6 gs-task-reveal">
@@ -219,7 +219,7 @@ const referenceLibraryNames = computed(() => {
         <!-- 逻辑漏洞 -->
         <LogicFlaws v-if="activeTab === 1" :data="parseJson(currentTask.logicFlaws)" />
         <!-- 交叉验证 -->
-        <CrossValidation v-if="activeTab === 2" :data="parseJson(currentTask.crossValidation)" />
+        <CrossValidation v-if="activeTab === 2" :data="parseJson(currentTask.crossValidation)" :mode="currentTask.mode" />
       </div>
     </template>
   </div>

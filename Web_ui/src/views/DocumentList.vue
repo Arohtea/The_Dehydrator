@@ -166,8 +166,11 @@ async function confirmRemove() {
     >
       <div class="w-full max-w-xl rounded-xl border border-border bg-white p-6 shadow-xl">
         <h2 class="font-heading text-lg font-semibold text-text">{{ analysisModeLabel }}前选择参考资料</h2>
-        <p class="mt-3 text-sm leading-relaxed text-text-muted">
-          当前文档：{{ analysisTargetDoc?.filename }}。可选一个或多个资料集作为交叉验证参考；也可以不选，直接开始分析。
+        <p v-if="analysisMode === 'quick'" class="mt-3 text-sm leading-relaxed text-text-muted">
+          当前文档：{{ analysisTargetDoc?.filename }}。快速分析会基于模型自身知识进行交叉验证，不会用当前论文验证当前论文；如有需要，可额外选择资料集作为参考。
+        </p>
+        <p v-else class="mt-3 text-sm leading-relaxed text-text-muted">
+          当前文档：{{ analysisTargetDoc?.filename }}。深度分析会结合模型自身知识、参考资料和联网搜索进行交叉验证，不会用当前论文验证当前论文；也可以不选资料集直接开始。
         </p>
 
         <div class="mt-5 space-y-3 max-h-80 overflow-y-auto pr-1">

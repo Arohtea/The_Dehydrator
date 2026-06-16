@@ -1,12 +1,18 @@
 <script setup>
 import { CheckCircle, XCircle, AlertCircle, ChevronDown } from 'lucide-vue-next'
-import { ref, onMounted, nextTick } from 'vue'
+import { computed, ref, onMounted, nextTick } from 'vue'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 gsap.registerPlugin(ScrollTrigger)
 
-defineProps({ data: [Array, String] })
+const props = defineProps({
+  data: [Array, String],
+  mode: {
+    type: String,
+    default: 'deep',
+  },
+})
 
 const expanded = ref({})
 const toggle = (i) => { expanded.value[i] = !expanded.value[i] }
@@ -15,9 +21,12 @@ const statusMap = {
   supported: { label: '已验证', icon: 'check', cls: 'text-green-600 bg-green-50' },
   contradicted: { label: '存疑', icon: 'x', cls: 'text-red-600 bg-red-50' },
   partially_supported: { label: '部分支持', icon: 'alert', cls: 'text-amber-600 bg-amber-50' },
+  unverifiable: { label: '无法验证', icon: 'alert', cls: 'text-slate-600 bg-slate-100' },
 }
 
 const containerRef = ref(null)
+const localEvidenceLabel = computed(() => '模型知识')
+const localEvidenceFallback = computed(() => '未提供模型知识摘要')
 
 onMounted(async () => {
   await nextTick()
@@ -50,23 +59,23 @@ const leave = (el, done) => {
 </script>
 
 <template>
-  <div v-if="!data" class="text-text-muted">暂无数据</div>
+  <div v-if="!props.data" class="text-text-muted">暂无数据</div>
 
-  <div v-else-if="typeof data === 'string'" class="whitespace-pre-wrap text-sm leading-relaxed">{{ data }}</div>
+  <div v-else-if="typeof props.data === 'string'" class="whitespace-pre-wrap text-sm leading-relaxed">{{ props.data }}</div>
 
   <div v-else class="space-y-4" ref="containerRef">
-    <div v-for="(item, i) in data" :key="i"
+    <div v-for="(item, i) in props.data" :key="i"
       class="bg-white border border-border rounded-lg overflow-hidden gs-cv-item opacity-0">
       <!-- 标题栏 -->
       <div class="px-4 py-3 flex items-center gap-2 cursor-pointer hover:bg-gray-50" @click="toggle(i)">
         <component :is="item.verification_status === 'contradicted' ? XCircle : item.verification_status === 'supported' ? CheckCircle : AlertCircle"
           class="w-4 h-4 shrink-0"
-          :class="(statusMap[item.verification_status] || statusMap.supported).cls.split(' ')[0]" />
+          :class="(statusMap[item.verification_status] || statusMap.unverifiable).cls.split(' ')[0]" />
         <p class="font-medium text-sm flex-1 min-w-0">{{ item.claim || `观点 ${i + 1}` }}</p>
         <span v-if="item.confidence != null" class="text-xs text-text-muted shrink-0">{{ Math.round(item.confidence * 100) }}%</span>
         <span v-if="item.verification_status"
           class="text-xs px-2 py-0.5 rounded-full shrink-0"
-          :class="(statusMap[item.verification_status] || statusMap.supported).cls">
+          :class="(statusMap[item.verification_status] || statusMap.unverifiable).cls">
           {{ (statusMap[item.verification_status] || { label: item.verification_status }).label }}
         </span>
         <ChevronDown class="w-4 h-4 text-text-muted shrink-0 transition-transform" :class="{ 'rotate-180': expanded[i] }" />
@@ -79,9 +88,9 @@ const leave = (el, done) => {
             <div class="p-4">
               <div class="flex items-center gap-1.5 mb-2">
                 <CheckCircle class="w-4 h-4 text-green-500" />
-                <span class="text-xs font-medium text-green-700">本地证据</span>
+                <span class="text-xs font-medium text-green-700">{{ localEvidenceLabel }}</span>
               </div>
-              <p class="text-sm text-text-muted leading-relaxed">{{ item.local_evidence_summary || '无' }}</p>
+              <p class="text-sm text-text-muted leading-relaxed">{{ item.local_evidence_summary || localEvidenceFallback }}</p>
             </div>
             <div class="p-4">
               <div class="flex items-center gap-1.5 mb-2">
