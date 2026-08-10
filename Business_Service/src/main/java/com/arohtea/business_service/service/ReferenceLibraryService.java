@@ -176,8 +176,9 @@ public class ReferenceLibraryService {
         String documentId = saved.getId();
         var settings = settingsService.get();
         CompletableFuture.runAsync(() -> {
+            String aiDocId = null;
             try {
-                String aiDocId = aiServiceClient.uploadDocument(
+                aiDocId = aiServiceClient.uploadDocument(
                         fileBytes,
                         file.getOriginalFilename(),
                         settings.getApiKey(),
@@ -197,6 +198,18 @@ public class ReferenceLibraryService {
                 log.info("参考资料向量化完成: {} -> {}", documentId, aiDocId);
             } catch (Exception e) {
                 log.error("参考资料向量化失败: {}", documentId, e);
+                if (aiDocId != null && !aiDocId.isBlank()) {
+                    try {
+                        aiServiceClient.deleteDocument(aiDocId);
+                    } catch (Exception cleanupException) {
+                        log.warn("清理失败的参考向量失败: {}", documentId, cleanupException);
+                    }
+                }
+                try {
+                    referenceArchiveService.deleteReferenceDocumentWithLinkedSource(documentId);
+                } catch (Exception cleanupException) {
+                    log.warn("清理失败的参考资料资源失败: {}", documentId, cleanupException);
+                }
             }
         });
 
@@ -205,7 +218,12 @@ public class ReferenceLibraryService {
 
     @Transactional
     public void deleteDocument(String documentId) throws Exception {
+        ReferenceDocument document = referenceDocumentRepository.findById(documentId).orElse(null);
+        if (document != null && document.getSourceDocumentId() != null && !document.getSourceDocumentId().isBlank()) {
+            throw new IllegalStateException("系统自动归档资料不能直接删除，请删除原始文档");
+        }
         referenceArchiveService.deleteReferenceDocumentWithLinkedSource(documentId);
+        log.info("审计: 删除参考资料 documentId={}", documentId);
     }
 
     @Transactional

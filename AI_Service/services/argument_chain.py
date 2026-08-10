@@ -1,9 +1,9 @@
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain_community.chat_models import ChatZhipuAI
 from config.settings import settings
 from prompts.argument_chain import MAP_PROMPT, REDUCE_PROMPT
 from services.stream_publisher import stream_invoke
+from services.output_models import ArgumentChainResult, parse_and_validate
 
 
 def _get_llm(api_key: str | None = None, model: str | None = None):
@@ -41,7 +41,4 @@ def extract_argument_chain(chunks: list[str], task_id: str = "", on_progress=Non
     llm = _get_llm(api_key, model)
     text = stream_invoke(llm, REDUCE_PROMPT.format(arguments=combined), task_id, "argument_chain_reduce")
     from services import strip_markdown_json
-    try:
-        return json.loads(strip_markdown_json(text))
-    except json.JSONDecodeError:
-        return {"raw": text}
+    return parse_and_validate(ArgumentChainResult, strip_markdown_json(text))

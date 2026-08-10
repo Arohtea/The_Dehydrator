@@ -43,7 +43,7 @@ watch(activeTab, async () => {
 
 // 初始挂载时，如果已有 task 的话，做个总控的入场
 // （配合 App.vue 的整体进场，这里做小范围递进）
-watch(currentTask, async (oldVal, newVal) => {
+watch(currentTask, async (newVal, oldVal) => {
   if (!oldVal && newVal) {
     await nextTick()
     gsap.fromTo('.gs-task-reveal', 

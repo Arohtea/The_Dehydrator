@@ -32,6 +32,8 @@ __pycache__/
 AI_Service/.venv/
 AI_Service/venv/
 docs/
+!docs/
+!docs/security-configuration.md
 # Environment
 .env
 .env.*

@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 @RestController
 @RequestMapping("/api/analysis")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class StreamController {
 
     private final RedisMessageListenerContainer listenerContainer;

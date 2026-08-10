@@ -57,8 +57,9 @@ public class DocumentService {
         String docId = saved.getId();
         var settings = settingsService.get();
         CompletableFuture.runAsync(() -> {
+            String aiDocId = null;
             try {
-                String aiDocId = aiServiceClient.uploadDocument(
+                aiDocId = aiServiceClient.uploadDocument(
                         fileBytes, file.getOriginalFilename(),
                         settings.getApiKey(), settings.getChunkSize(), settings.getChunkOverlap());
                 Document current = documentRepository.findById(docId).orElse(null);
@@ -73,6 +74,18 @@ public class DocumentService {
                 log.info("文档向量化完成: {} -> {}", docId, aiDocId);
             } catch (Exception e) {
                 log.error("文档向量化失败: {}", docId, e);
+                if (aiDocId != null && !aiDocId.isBlank()) {
+                    try {
+                        aiServiceClient.deleteDocument(aiDocId);
+                    } catch (Exception cleanupException) {
+                        log.warn("清理失败的分析向量失败: {}", docId, cleanupException);
+                    }
+                }
+                try {
+                    referenceArchiveService.deleteSourceDocumentWithMirrors(docId);
+                } catch (Exception cleanupException) {
+                    log.warn("清理失败的分析文档资源失败: {}", docId, cleanupException);
+                }
             }
         });
 

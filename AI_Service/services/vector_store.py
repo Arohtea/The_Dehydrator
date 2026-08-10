@@ -10,7 +10,11 @@ _client = None
 def get_client() -> QdrantClient:
     global _client
     if _client is None:
-        _client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+        _client = QdrantClient(
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+            api_key=settings.qdrant_api_key or None,
+        )
     return _client
 
 
@@ -112,17 +116,43 @@ def delete_by_doc_id(doc_id: str):
     )
 
 
-def get_document_points(doc_id: str, source_type: str = "analysis_document", with_vectors: bool = False):
+def scroll_all(
+    scroll_filter: models.Filter,
+    with_vectors: bool = False,
+    max_points: int | None = None,
+):
+    """分页读取所有匹配点，并在达到上限时立即终止。"""
     ensure_collection()
     client = get_client()
-    points, _ = client.scroll(
-        collection_name=settings.qdrant_collection,
-        scroll_filter=_document_filter(source_type, doc_id=doc_id),
-        limit=1000,
-        with_payload=True,
+    points = []
+    point_limit = max_points or settings.max_chunks_per_document
+    offset = None
+    while True:
+        page, offset = client.scroll(
+            collection_name=settings.qdrant_collection,
+            scroll_filter=scroll_filter,
+            limit=100,
+            offset=offset,
+            with_payload=True,
+            with_vectors=with_vectors,
+        )
+        points.extend(page)
+        if len(points) > point_limit:
+            raise ValueError("向量片段数量超过系统上限")
+        if offset is None:
+            return points
+
+
+def get_document_points(
+    doc_id: str,
+    source_type: str = "analysis_document",
+    with_vectors: bool = False,
+):
+    return scroll_all(
+        _document_filter(source_type, doc_id=doc_id),
         with_vectors=with_vectors,
+        max_points=settings.max_chunks_per_document,
     )
-    return points
 
 
 def clone_analysis_document_to_reference(doc_id: str, library_id: str) -> tuple[str, list[str]]:
@@ -159,10 +189,11 @@ def search_similar_in_document(query: str, top_k: int = 5, doc_id: str | None = 
     ensure_collection()
     client = get_client()
     vec = embed_query(query)
+    bounded_top_k = min(max(top_k, 1), settings.max_search_results)
     results = client.query_points(
         settings.qdrant_collection,
         query=vec,
-        limit=top_k,
+        limit=bounded_top_k,
         query_filter=_analysis_document_filter(doc_id),
     )
     return [
@@ -183,10 +214,11 @@ def search_reference_library(query: str, library_ids: list[str], top_k: int = 5)
     ensure_collection()
     client = get_client()
     vec = embed_query(query)
+    bounded_top_k = min(max(top_k, 1), settings.max_search_results)
     results = client.query_points(
         settings.qdrant_collection,
         query=vec,
-        limit=top_k,
+        limit=bounded_top_k,
         query_filter=_reference_document_filter(library_ids),
     )
     return [

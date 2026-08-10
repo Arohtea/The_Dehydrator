@@ -1,6 +1,34 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/api' })
+const api = axios.create({
+  baseURL: '/api',
+  withCredentials: true,
+  withXSRFToken: true,
+  xsrfCookieName: 'XSRF-TOKEN',
+  xsrfHeaderName: 'X-XSRF-TOKEN',
+})
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const requestUrl = error.config?.url || ''
+    if (error.response?.status === 401 && !requestUrl.startsWith('/auth/')) {
+      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+    }
+    return Promise.reject(error)
+  },
+)
+
+export const getCsrfToken = () => api.get('/auth/csrf')
+
+export const login = async (username, password) => {
+  await getCsrfToken()
+  return api.post('/auth/login', { username, password })
+}
+
+export const getCurrentUser = () => api.get('/auth/me')
+
+export const logout = () => api.post('/auth/logout')
 
 export const uploadDocument = (file, onProgress) => {
   const form = new FormData()

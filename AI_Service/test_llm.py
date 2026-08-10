@@ -3,7 +3,7 @@ from config.settings import settings
 from langchain_community.chat_models import ChatZhipuAI
 
 print(f"模型: {settings.zhipuai_model}")
-print(f"API Key: {settings.zhipuai_api_key[:8]}...")
+print(f"API Key 已配置: {bool(settings.zhipuai_api_key)}")
 
 llm = ChatZhipuAI(
     model=settings.zhipuai_model,

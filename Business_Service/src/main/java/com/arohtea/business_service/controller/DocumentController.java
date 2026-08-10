@@ -2,6 +2,7 @@ package com.arohtea.business_service.controller;
 
 import com.arohtea.business_service.model.Document;
 import com.arohtea.business_service.service.DocumentService;
+import com.arohtea.business_service.service.RequestRateLimiter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -12,14 +13,17 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/documents")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final RequestRateLimiter requestRateLimiter;
 
     @PostMapping("/upload")
     public ResponseEntity<Document> upload(
             @RequestParam("file") MultipartFile file) throws Exception {
+        if (!requestRateLimiter.allowUpload()) {
+            return ResponseEntity.status(429).build();
+        }
         return ResponseEntity.ok(documentService.upload(file));
     }
 

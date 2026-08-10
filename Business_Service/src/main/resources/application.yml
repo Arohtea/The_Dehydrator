@@ -1,11 +1,17 @@
 server:
   port: 8080
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        secure: ${COOKIE_SECURE:false}
+        same-site: strict
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/dehydrator
-    username: postgres
-    password: 123456
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/dehydrator}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -13,19 +19,32 @@ spring:
     show-sql: false
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: admin
-    password: admin
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
 
 minio:
-  endpoint: http://localhost:9000
-  access-key: admin
-  secret-key: 12345678
-  bucket: dehydrator
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: ${MINIO_BUCKET:dehydrator}
 
 ai-service:
-  url: http://localhost:8000
+  url: ${AI_SERVICE_URL:http://localhost:8000}
+  service-token: ${INTERNAL_SERVICE_TOKEN}
+
+security:
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password-hash: ${ADMIN_PASSWORD_HASH}
+  allowed-models: ${ALLOWED_MODELS:glm-5,glm-4.6}

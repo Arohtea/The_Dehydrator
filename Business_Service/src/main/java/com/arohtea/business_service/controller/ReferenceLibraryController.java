@@ -5,9 +5,9 @@ import com.arohtea.business_service.model.ReferenceDocument;
 import com.arohtea.business_service.model.ReferenceFolder;
 import com.arohtea.business_service.model.ReferenceLibrary;
 import com.arohtea.business_service.service.ReferenceLibraryService;
+import com.arohtea.business_service.service.RequestRateLimiter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,10 +25,10 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class ReferenceLibraryController {
 
     private final ReferenceLibraryService referenceLibraryService;
+    private final RequestRateLimiter requestRateLimiter;
 
     @PostMapping("/reference-libraries")
     public ResponseEntity<?> createLibrary(@RequestBody Map<String, String> body) {
@@ -149,6 +149,9 @@ public class ReferenceLibraryController {
     public ResponseEntity<?> uploadDocument(
             @PathVariable("id") String id,
             @RequestParam("file") MultipartFile file) throws Exception {
+        if (!requestRateLimiter.allowUpload()) {
+            return ResponseEntity.status(429).body(Map.of("error", "上传请求过于频繁"));
+        }
         try {
             ReferenceDocument document = referenceLibraryService.uploadDocument(id, file);
             return ResponseEntity.ok(document);
@@ -176,8 +179,12 @@ public class ReferenceLibraryController {
     }
 
     @DeleteMapping("/reference-documents/{id}")
-    public ResponseEntity<Void> deleteDocument(@PathVariable("id") String id) throws Exception {
-        referenceLibraryService.deleteDocument(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> deleteDocument(@PathVariable("id") String id) throws Exception {
+        try {
+            referenceLibraryService.deleteDocument(id);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalStateException exception) {
+            return ResponseEntity.status(409).body(Map.of("error", exception.getMessage()));
+        }
     }
 }

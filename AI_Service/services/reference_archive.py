@@ -1,11 +1,10 @@
-import json
-
 from langchain_community.chat_models import ChatZhipuAI
 
 from config.settings import settings
 from prompts.reference_classification import REFERENCE_CLASSIFICATION_PROMPT
 from services import strip_markdown_json
 from services.vector_store import clone_analysis_document_to_reference
+from services.output_models import ReferenceClassificationResult, parse_and_validate
 
 
 def _get_llm(api_key: str | None = None, model: str | None = None):
@@ -38,7 +37,9 @@ def _suggest_folder_and_category(filename: str, document_preview: str,
     content = response.content if isinstance(response.content, str) else "".join(
         item.get("text", "") for item in response.content if isinstance(item, dict)
     )
-    result = json.loads(strip_markdown_json(content))
+    result = parse_and_validate(ReferenceClassificationResult, strip_markdown_json(content))
+    if "raw" in result:
+        raise ValueError("AI 分类结果格式无效")
     return {
         "folder_name": result.get("folder_name"),
         "category_name": result.get("category_name"),

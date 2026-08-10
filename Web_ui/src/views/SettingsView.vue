@@ -3,7 +3,7 @@ import { ref, onMounted, nextTick } from 'vue'
 import { getSettings, saveSettings } from '@/api'
 import gsap from 'gsap'
 
-const form = ref({ apiKey: '', model: '', mapWorkers: null, chunkSize: null, chunkOverlap: null })
+const form = ref({ apiKey: '', model: '', mapWorkers: null, chunkSize: null, chunkOverlap: null, apiKeyConfigured: false })
 const saving = ref(false)
 const msg = ref('')
 
@@ -12,7 +12,7 @@ const containerRef = ref(null)
 onMounted(async () => {
   try {
     const { data } = await getSettings()
-    Object.assign(form.value, data)
+    Object.assign(form.value, data, { apiKey: '' })
   } catch {}
 
   await nextTick()
@@ -32,7 +32,7 @@ async function onSave() {
     await saveSettings(form.value)
     msg.value = '保存成功'
     const { data } = await getSettings()
-    Object.assign(form.value, data)
+    Object.assign(form.value, data, { apiKey: '' })
   } catch {
     msg.value = '保存失败'
   } finally {
@@ -48,9 +48,11 @@ async function onSave() {
     <div class="space-y-5">
       <div class="gs-setting-item opacity-0">
         <label class="block text-sm font-medium mb-1">API Key</label>
-        <input v-model="form.apiKey" type="text" placeholder="输入智谱AI API Key"
+        <input v-model="form.apiKey" type="password" autocomplete="new-password" placeholder="输入智谱AI API Key"
           class="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary" />
-        <p class="text-xs text-text-muted mt-1">智谱AI平台的API密钥，用于文档向量化和AI分析</p>
+        <p class="text-xs text-text-muted mt-1">
+          {{ form.apiKeyConfigured ? '已配置 API Key；留空表示保持原值' : '尚未配置 API Key' }}
+        </p>
       </div>
 
       <div class="gs-setting-item opacity-0">

@@ -21,6 +21,9 @@ public class AiServiceClient {
     @Value("${ai-service.url}")
     private String aiServiceUrl;
 
+    @Value("${ai-service.service-token:}")
+    private String serviceToken;
+
     public record ArchiveReferenceResult(
             String docId,
             String folderName,
@@ -56,6 +59,7 @@ public class AiServiceClient {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.set("X-Service-Token", serviceToken);
         if (apiKey != null) headers.set("X-Api-Key", apiKey);
         if (chunkSize != null) headers.set("X-Chunk-Size", chunkSize.toString());
         if (chunkOverlap != null) headers.set("X-Chunk-Overlap", chunkOverlap.toString());
@@ -72,7 +76,14 @@ public class AiServiceClient {
     }
 
     public void deleteDocument(String aiDocId) {
-        restTemplate.delete(aiServiceUrl + "/api/document/" + aiDocId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Service-Token", serviceToken);
+        restTemplate.exchange(
+                aiServiceUrl + "/api/document/" + aiDocId,
+                HttpMethod.DELETE,
+                new HttpEntity<>(headers),
+                Void.class
+        );
     }
 
     @SuppressWarnings("unchecked")
@@ -85,6 +96,7 @@ public class AiServiceClient {
                                                           String model) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Service-Token", serviceToken);
         if (apiKey != null) headers.set("X-Api-Key", apiKey);
         if (model != null) headers.set("X-Model", model);
 

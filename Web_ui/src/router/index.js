@@ -1,8 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { getCurrentUser } from '@/api'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/login',
+      component: () => import('@/views/LoginView.vue'),
+    },
     {
       path: '/',
       component: () => import('@/views/UploadView.vue'),
@@ -25,6 +30,19 @@ const router = createRouter({
       component: () => import('@/views/ReferenceLibraryView.vue'),
     },
   ],
+})
+
+router.beforeEach(async (to) => {
+  if (to.path === '/login') return true
+  try {
+    await getCurrentUser()
+    return true
+  } catch (error) {
+    if (error.response?.status === 401) {
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
+    return true
+  }
 })
 
 export default router

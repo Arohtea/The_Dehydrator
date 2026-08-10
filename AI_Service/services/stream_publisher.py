@@ -9,7 +9,12 @@ CANCEL_CHECK_INTERVAL = 10
 def _get_redis():
     global _redis
     if _redis is None:
-        _redis = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
+        _redis = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password or None,
+            decode_responses=True,
+        )
     return _redis
 
 

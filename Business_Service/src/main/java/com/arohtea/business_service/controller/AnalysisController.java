@@ -4,6 +4,7 @@ import com.arohtea.business_service.model.AnalysisTask;
 import com.arohtea.business_service.model.Document;
 import com.arohtea.business_service.service.AnalysisService;
 import com.arohtea.business_service.service.DocumentService;
+import com.arohtea.business_service.service.RequestRateLimiter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,17 +16,21 @@ import java.util.Objects;
 @RestController
 @RequestMapping("/api/analysis")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class AnalysisController {
 
     private final AnalysisService analysisService;
     private final DocumentService documentService;
+    private final RequestRateLimiter requestRateLimiter;
 
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody Map<String, Object> body) {
         String docId = body.get("documentId") instanceof String value ? value : null;
         String mode = body.get("mode") instanceof String value ? value : "deep";
         List<String> referenceLibraryIds = extractStringList(body.get("referenceLibraryIds"));
+        if (referenceLibraryIds.size() > 50) {
+            return ResponseEntity.unprocessableEntity()
+                    .body(Map.of("error", "参考资料集数量不能超过 50"));
+        }
         if (docId == null || docId.isBlank()) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "documentId不能为空"));
@@ -39,9 +44,21 @@ public class AnalysisController {
             return ResponseEntity.status(202)
                     .body(Map.of("error", "文档正在向量化，请稍后再试"));
         }
-        AnalysisTask task = analysisService.createTask(
-                docId, doc.getAiDocId(), mode, referenceLibraryIds);
-        return ResponseEntity.ok(task);
+        if (!requestRateLimiter.allowAnalysisStart()) {
+            return ResponseEntity.status(429)
+                    .body(Map.of("error", "分析请求过于频繁"));
+        }
+        try {
+            AnalysisTask task = analysisService.createTask(
+                    docId, doc.getAiDocId(), mode, referenceLibraryIds);
+            return ResponseEntity.ok(task);
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.unprocessableEntity()
+                    .body(Map.of("error", exception.getMessage()));
+        } catch (IllegalStateException exception) {
+            return ResponseEntity.status(429)
+                    .body(Map.of("error", exception.getMessage()));
+        }
     }
 
     @GetMapping("/task/{taskId}")

@@ -65,11 +65,11 @@
 - `RabbitMQ`
 - `MinIO`
 - `Qdrant`
+- `Redis`
 
 要完整跑通系统，你还需要额外准备并启动：
 
 - `PostgreSQL`
-- `Redis`
 - `Business_Service`
 - `AI_Service`
 - `Web_ui`
@@ -109,7 +109,7 @@
 
 ## 推荐启动顺序
 
-### 1. 先准备 PostgreSQL 和 Redis
+### 1. 先准备 PostgreSQL
 
 `Business_Service` 默认连接配置如下：
 
@@ -118,7 +118,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/dehydrator
     username: postgres
-    password: 123456
+    password: ${POSTGRES_PASSWORD}
   data:
     redis:
       host: localhost
@@ -129,7 +129,6 @@ spring:
 
 1. PostgreSQL 已启动
 2. 已创建数据库 `dehydrator`
-3. Redis 已启动
 
 如果你不用默认地址，请修改 [Business_Service/src/main/resources/application.yml](Business_Service/src/main/resources/application.yml)。
 
@@ -148,8 +147,9 @@ docker compose -f docker-compose.vm-infra.yml up -d
 - `minio`
 - `minio-init`
 - `qdrant`
+- `redis`
 
-不会启动 `PostgreSQL`、`Redis`，也不会启动三段应用服务。
+不会启动 `PostgreSQL`，也不会启动三段应用服务。
 
 ### 3. 配置 AI Service
 
@@ -164,18 +164,21 @@ ZHIPUAI_TIMEOUT=300
 
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
+QDRANT_API_KEY=${QDRANT_API_KEY}
 
 MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=admin
-MINIO_SECRET_KEY=12345678
+MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
-RABBITMQ_USER=admin
-RABBITMQ_PASSWORD=admin
+RABBITMQ_USER=${RABBITMQ_USER}
+RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
 ```
 
 补充两点：
@@ -239,14 +242,14 @@ npm run dev
 | 服务 | 地址 | 自检方式 |
 |------|------|----------|
 | Web UI（开发） | http://localhost:5173 | 页面能正常打开 |
-| Business Service | http://localhost:8080 | 打开 `http://localhost:8080/api/settings` |
+| Business Service | http://localhost:8080 | 登录后访问 `http://localhost:8080/api/settings` |
 | AI Service | http://localhost:8000 | 打开 `http://localhost:8000/health` |
-| RabbitMQ 管理台 | http://localhost:15672 | `admin / admin` |
+| RabbitMQ 管理台 | http://localhost:15672 | 使用部署 Secret 登录 |
 | MinIO API | http://localhost:9000 | 供后端和 AI Service 使用 |
-| MinIO 控制台 | http://localhost:9001 | `admin / 12345678` |
+| MinIO 控制台 | http://localhost:9001 | 使用部署 Secret 登录 |
 | Qdrant | http://localhost:6333 | 向量库 API |
 | PostgreSQL | localhost:5432 | `dehydrator` 数据库可连接 |
-| Redis | localhost:6379 | 能正常读写键值 |
+| Redis | localhost:6379 | 使用密码认证后能正常读写键值 |
 
 推荐按这个顺序做一次冒烟验证：
 
@@ -261,7 +264,7 @@ npm run dev
 ## 常用命令
 
 ```bash
-# 启动 RabbitMQ / MinIO / Qdrant
+# 启动 RabbitMQ / MinIO / Qdrant / Redis
 cd docker
 docker compose -f docker-compose.vm-infra.yml up -d
 
@@ -272,6 +275,7 @@ docker compose -f docker-compose.vm-infra.yml logs -f
 docker compose -f docker-compose.vm-infra.yml logs -f rabbitmq
 docker compose -f docker-compose.vm-infra.yml logs -f minio
 docker compose -f docker-compose.vm-infra.yml logs -f qdrant
+docker compose -f docker-compose.vm-infra.yml logs -f redis
 
 # 停止基础设施
 docker compose -f docker-compose.vm-infra.yml down

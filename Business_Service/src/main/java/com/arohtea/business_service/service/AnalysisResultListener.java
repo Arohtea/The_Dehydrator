@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -17,13 +18,20 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class AnalysisResultListener {
 
+    private static final String EXPECTED_SOURCE = "ai-service";
+
     private final AnalysisTaskRepository taskRepository;
     private final ObjectMapper objectMapper;
 
     @RabbitListener(queues = "analysis.result")
+    @Transactional
     public void onResult(String message) {
         try {
             JsonNode node = objectMapper.readTree(message);
+            if (!EXPECTED_SOURCE.equals(node.path("source").asText())) {
+                log.warn("忽略未知来源的分析结果消息");
+                return;
+            }
             String taskId = node.get("taskId").asText();
 
             AnalysisTask task = taskRepository.findById(taskId)
@@ -35,7 +43,7 @@ public class AnalysisResultListener {
 
             // 终态守卫：已完成/失败/取消的任务不再更新
             TaskStatus status = task.getStatus();
-            if (status == TaskStatus.COMPLETED || status == TaskStatus.FAILED || status == TaskStatus.CANCELLED) {
+            if (status != TaskStatus.PROCESSING) {
                 log.info("任务已处于终态 {}，跳过更新: {}", status, taskId);
                 return;
             }
@@ -43,7 +51,7 @@ public class AnalysisResultListener {
             // 处理失败消息
             if (node.has("failed") && node.get("failed").asBoolean()) {
                 task.setStatus(TaskStatus.FAILED);
-                task.setCurrentStep(node.has("error") ? node.get("error").asText() : "分析失败");
+                task.setCurrentStep(node.has("error") ? node.get("error").asText().substring(0, Math.min(500, node.get("error").asText().length())) : "分析失败");
                 task.setCompletedAt(LocalDateTime.now());
                 taskRepository.save(task);
                 return;
@@ -82,9 +90,14 @@ public class AnalysisResultListener {
     }
 
     @RabbitListener(queues = "analysis.progress")
+    @Transactional
     public void onProgress(String message) {
         try {
             JsonNode node = objectMapper.readTree(message);
+            if (!EXPECTED_SOURCE.equals(node.path("source").asText())) {
+                log.warn("忽略未知来源的分析进度消息");
+                return;
+            }
             String taskId = node.get("taskId").asText();
             taskRepository.findById(taskId).ifPresent(task -> {
                 if (task.getStatus() != TaskStatus.PROCESSING) return;

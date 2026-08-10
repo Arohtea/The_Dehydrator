@@ -160,6 +160,7 @@ public class ReferenceArchiveService {
             deleteReferenceDocumentRecordAndResources(mirror);
         }
         deleteSourceDocumentRecordAndResources(document);
+        log.info("审计: 删除原始文档及自动归档镜像 documentId={} mirrorCount={}", documentId, mirrors.size());
     }
 
     public void deleteReferenceDocumentWithLinkedSource(String referenceDocumentId) {
@@ -172,25 +173,48 @@ public class ReferenceArchiveService {
             return;
         }
         deleteReferenceDocumentRecordAndResources(document);
+        log.info("审计: 删除独立参考资料 documentId={}", referenceDocumentId);
     }
 
     private void deleteReferenceDocumentRecordAndResources(ReferenceDocument document) {
-        referenceDocumentRepository.deleteById(document.getId());
-        referenceDocumentRepository.flush();
         if (document.getAiDocId() != null && !document.getAiDocId().isBlank()) {
-            safeDeleteAiDocument(document.getAiDocId(), "删除参考资料向量失败");
+            deleteAiDocument(document.getAiDocId(), "删除参考资料向量失败");
         }
         if (document.getSourceDocumentId() == null || document.getSourceDocumentId().isBlank()) {
-            safeDeleteObject(document.getMinioPath(), "删除参考资料MinIO文件失败");
+            deleteObject(document.getMinioPath(), "删除参考资料MinIO文件失败");
         }
+        referenceDocumentRepository.deleteById(document.getId());
+        referenceDocumentRepository.flush();
     }
 
     private void deleteSourceDocumentRecordAndResources(Document document) {
+        if (document.getAiDocId() != null && !document.getAiDocId().isBlank()) {
+            deleteAiDocument(document.getAiDocId(), "删除分析文档向量失败");
+        }
+        deleteObject(document.getMinioPath(), "删除分析文档MinIO文件失败");
         documentRepository.deleteById(document.getId());
         documentRepository.flush();
-        safeDeleteObject(document.getMinioPath(), "删除分析文档MinIO文件失败");
-        if (document.getAiDocId() != null && !document.getAiDocId().isBlank()) {
-            safeDeleteAiDocument(document.getAiDocId(), "删除分析文档向量失败");
+    }
+
+    private void deleteObject(String minioPath, String message) {
+        if (minioPath == null || minioPath.isBlank()) {
+            return;
+        }
+        try {
+            minioClient.removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(minioPath)
+                    .build());
+        } catch (Exception e) {
+            throw new IllegalStateException(message, e);
+        }
+    }
+
+    private void deleteAiDocument(String aiDocId, String message) {
+        try {
+            aiServiceClient.deleteDocument(aiDocId);
+        } catch (Exception e) {
+            throw new IllegalStateException(message, e);
         }
     }
 

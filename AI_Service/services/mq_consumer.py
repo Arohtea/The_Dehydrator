@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+from urllib.parse import quote
 import aio_pika
 from config.settings import settings
 
@@ -8,11 +9,30 @@ log = logging.getLogger(__name__)
 _progress_connection = None
 _progress_channel = None
 _progress_exchange = None
+MESSAGE_SOURCE = "ai-service"
+
+
+def _safe_error(error: Exception | str) -> str:
+    """移除错误文本中的凭据，避免消息和日志泄露 API Key 或连接认证信息。"""
+    message = str(error)
+    for secret in (
+        settings.zhipuai_api_key,
+        settings.internal_service_token,
+        settings.minio_access_key,
+        settings.minio_secret_key,
+        settings.redis_password,
+        settings.rabbitmq_password,
+    ):
+        if secret:
+            message = message.replace(secret, "[REDACTED]")
+    return message[:500]
 
 
 async def get_connection():
+    username = quote(settings.rabbitmq_user, safe="")
+    password = quote(settings.rabbitmq_password, safe="")
     return await aio_pika.connect_robust(
-        f"amqp://{settings.rabbitmq_user}:{settings.rabbitmq_password}"
+        f"amqp://{username}:{password}"
         f"@{settings.rabbitmq_host}:{settings.rabbitmq_port}/",
         heartbeat=600,
     )
@@ -42,7 +62,12 @@ async def _publish_failed(task_id: str, error: str):
                 "analysis.exchange", aio_pika.ExchangeType.DIRECT, durable=True
             )
             await exchange.publish(
-                aio_pika.Message(json.dumps({"taskId": task_id, "failed": True, "error": error}, ensure_ascii=False).encode()),
+                aio_pika.Message(json.dumps({
+                    "source": MESSAGE_SOURCE,
+                    "taskId": task_id,
+                    "failed": True,
+                    "error": _safe_error(error),
+                }, ensure_ascii=False).encode()),
                 routing_key="analysis.result",
             )
     except Exception:
@@ -59,10 +84,12 @@ async def _process_message(message: aio_pika.IncomingMessage):
         reference_library_ids = [
             item for item in data.get("referenceLibraryIds", [])
             if isinstance(item, str) and item.strip()
-        ]
+        ][:50]
         api_key = data.get("apiKey")
         model = data.get("model")
         map_workers = data.get("mapWorkers")
+        if not isinstance(map_workers, int) or not 1 <= map_workers <= 8:
+            map_workers = settings.map_workers
         log.info("收到分析任务: %s", task_id)
 
         def _run_analysis():
@@ -71,24 +98,26 @@ async def _process_message(message: aio_pika.IncomingMessage):
                     ch, exchange = _get_progress_exchange()
                     ch.basic_publish(
                         exchange=exchange, routing_key="analysis.progress",
-                        body=json.dumps({"taskId": task_id, "progress": progress, "currentStep": step}),
+                        body=json.dumps({
+                            "source": MESSAGE_SOURCE,
+                            "taskId": task_id,
+                            "progress": progress,
+                            "currentStep": step,
+                        }),
                     )
                 except Exception:
                     log.warning("进度上报失败", exc_info=True)
 
             report(5, "正在检索文档片段...")
-            from services.vector_store import get_client
-            from qdrant_client import models as qmodels
-            client = get_client()
-            results = client.scroll(
-                settings.qdrant_collection,
-                scroll_filter=qmodels.Filter(must=[
-                    qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id)),
-                    qmodels.FieldCondition(key="source_type", match=qmodels.MatchValue(value="analysis_document")),
-                ]),
-                limit=1000,
-            )
-            chunks = [p.payload["text"] for p in results[0]]
+            from services.vector_store import get_document_points
+            points = get_document_points(doc_id, source_type="analysis_document")
+            chunks = [
+                point.payload["text"]
+                for point in points
+                if point.payload and point.payload.get("text")
+            ]
+            if not chunks:
+                raise ValueError("未找到该文档的内容")
             log.info("doc_id=%s, 检索到 %d 个片段", doc_id, len(chunks))
 
             from services.argument_chain import extract_argument_chain
@@ -117,6 +146,7 @@ async def _process_message(message: aio_pika.IncomingMessage):
         chain, flaws, validation = await asyncio.to_thread(_run_analysis)
 
         result = {
+            "source": MESSAGE_SOURCE,
             "taskId": task_id,
             "mode": mode,
             "argumentChain": chain,
@@ -142,9 +172,10 @@ async def _process_message(message: aio_pika.IncomingMessage):
         if isinstance(e, AnalysisCancelled):
             log.info("分析已取消: %s", task_id)
         else:
-            log.error("分析失败: %s", e, exc_info=True)
+            safe_error = _safe_error(e)
+            log.error("分析失败: %s", safe_error, exc_info=True)
             if task_id:
-                await _publish_failed(task_id, str(e)[:500])
+                await _publish_failed(task_id, safe_error)
 
 
 async def start_consumer():

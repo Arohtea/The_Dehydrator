@@ -490,6 +490,7 @@ async function removeDocument(doc) {
                   </div>
 
                   <button
+                    v-if="!doc.sourceDocumentId"
                     class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                     :disabled="deletingDocumentId === doc.id"
                     @click="removeDocument(doc)"

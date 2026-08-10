@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { Upload, List, Settings, Layers, Sparkles, Library } from 'lucide-vue-next'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { Upload, List, Settings, Layers, Sparkles, Library, LogOut } from 'lucide-vue-next'
+import { logout } from '@/api'
 import Lenis from '@studio-freight/lenis'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -11,7 +12,17 @@ gsap.registerPlugin(ScrollTrigger)
 const navRef = ref(null)
 const mainRef = ref(null)
 const route = useRoute()
+const router = useRouter()
 let lenis = null
+const lenisTicker = (time) => lenis?.raf(time * 1000)
+
+async function handleLogout() {
+  try {
+    await logout()
+  } finally {
+    await router.replace('/login')
+  }
+}
 
 const mainWidthClass = computed(() =>
   route.path === '/reference-libraries' ? 'max-w-[1600px]' : 'max-w-5xl'
@@ -35,9 +46,7 @@ onMounted(() => {
   lenis.on('scroll', ScrollTrigger.update)
 
   // 3. 将 Lenis 集成到 GSAP 主时间轴 ticker
-  gsap.ticker.add((time) => {
-    lenis.raf(time * 1000)
-  })
+  gsap.ticker.add(lenisTicker)
   gsap.ticker.lagSmoothing(0)
 
   // 4. 全局首屏进场动画
@@ -61,7 +70,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (lenis) {
     lenis.destroy()
-    gsap.ticker.remove((time) => lenis.raf(time * 1000))
+    gsap.ticker.remove(lenisTicker)
   }
 })
 </script>
@@ -96,6 +105,10 @@ onUnmounted(() => {
           <Settings class="w-4 h-4" />
           <span>设置</span>
         </RouterLink>
+        <button type="button" title="退出登录" class="flex items-center gap-1.5 text-sm text-text-muted hover:text-primary transition-colors duration-200 cursor-pointer" @click="handleLogout">
+          <LogOut class="w-4 h-4" />
+          <span>退出</span>
+        </button>
       </div>
     </nav>
     <main

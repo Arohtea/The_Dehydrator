@@ -37,15 +37,22 @@ public class AnalysisService {
         return "quick".equalsIgnoreCase(mode) ? "quick" : "deep";
     }
 
-    public AnalysisTask createTask(String documentId, String aiDocId, String mode, List<String> referenceLibraryIds) {
+    public synchronized AnalysisTask createTask(
+            String documentId,
+            String aiDocId,
+            String mode,
+            List<String> referenceLibraryIds) {
         List<String> normalizedLibraryIds = normalizeReferenceLibraryIds(referenceLibraryIds);
+        if (taskRepository.countByStatusIn(List.of(TaskStatus.PENDING, TaskStatus.PROCESSING)) >= 2) {
+            throw new IllegalStateException("当前同时运行的分析任务已达到上限");
+        }
         List<String> referenceLibraryNames = resolveReferenceLibraryNames(normalizedLibraryIds);
         AnalysisTask task = new AnalysisTask();
         task.setDocumentId(documentId);
         task.setMode(normalizeMode(mode));
         task.setReferenceLibraryIds(writeJsonList(normalizedLibraryIds));
         task.setReferenceLibraryNames(writeJsonList(referenceLibraryNames));
-        task.setStatus(TaskStatus.PENDING);
+        task.setStatus(TaskStatus.PROCESSING);
         task = taskRepository.save(task);
 
         // 发送到RabbitMQ异步处理，携带用户配置
@@ -70,8 +77,7 @@ public class AnalysisService {
             return taskRepository.save(task);
         }
 
-        task.setStatus(TaskStatus.PROCESSING);
-        return taskRepository.save(task);
+        return task;
     }
 
     public AnalysisTask getTask(String taskId) {
@@ -84,7 +90,7 @@ public class AnalysisService {
 
     public AnalysisTask cancelTask(String taskId) {
         AnalysisTask task = taskRepository.findById(taskId).orElse(null);
-        if (task == null || task.getStatus() != TaskStatus.PROCESSING) {
+        if (task == null || (task.getStatus() != TaskStatus.PROCESSING && task.getStatus() != TaskStatus.PENDING)) {
             return task;
         }
         redisTemplate.opsForValue().set("analysis:cancel:" + taskId, "1", Duration.ofMinutes(30));
@@ -102,6 +108,7 @@ public class AnalysisService {
             task.setStatus(TaskStatus.FAILED);
             task.setCurrentStep("任务超时");
             task.setCompletedAt(LocalDateTime.now());
+            redisTemplate.opsForValue().set("analysis:cancel:" + task.getId(), "1", Duration.ofMinutes(30));
             taskRepository.save(task);
             log.info("超时清理任务: {}", task.getId());
         }
@@ -128,6 +135,9 @@ public class AnalysisService {
                         library -> library.getId(),
                         library -> library.getName()
                 ));
+        if (libraries.size() != referenceLibraryIds.size()) {
+            throw new IllegalArgumentException("参考资料集不存在");
+        }
         return referenceLibraryIds.stream()
                 .map(libraries::get)
                 .filter(Objects::nonNull)

@@ -13,6 +13,10 @@ public class AnalysisTask {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
+    @Version
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    private Long version = 0L;
+
     private String documentId;
 
     @Enumerated(EnumType.STRING)
