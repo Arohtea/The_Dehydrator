@@ -1,7 +1,10 @@
 package com.arohtea.business_service.service;
 
 import com.arohtea.business_service.client.AiServiceClient;
+import com.arohtea.business_service.dto.DocumentSummaryResponse;
 import com.arohtea.business_service.model.Document;
+import com.arohtea.business_service.model.DocumentDeletionInProgressException;
+import com.arohtea.business_service.repository.AnalysisTaskRepository;
 import com.arohtea.business_service.repository.DocumentRepository;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -10,7 +13,6 @@ import io.minio.MakeBucketArgs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,7 @@ import java.io.ByteArrayInputStream;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -26,10 +29,13 @@ import java.util.concurrent.CompletableFuture;
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
+    private final AnalysisTaskRepository analysisTaskRepository;
     private final MinioClient minioClient;
     private final AiServiceClient aiServiceClient;
     private final SystemSettingsService settingsService;
     private final ReferenceArchiveService referenceArchiveService;
+    private final AnalysisService analysisService;
+    private final DocumentVectorizationService vectorizationService;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -71,14 +77,12 @@ public class DocumentService {
                 aiDocId = aiServiceClient.uploadDocument(
                         fileBytes, file.getOriginalFilename(),
                         vectorModel, settings.getChunkSize(), settings.getChunkOverlap());
-                Document current = documentRepository.findById(docId).orElse(null);
+                Document current = vectorizationService.complete(docId, aiDocId);
                 if (current == null) {
                     aiServiceClient.deleteDocument(aiDocId);
-                    log.info("文档已删除，回收分析向量: {} -> {}", docId, aiDocId);
+                    log.info("文档已删除或进入删除流程，回收分析向量: {} -> {}", docId, aiDocId);
                     return;
                 }
-                current.setAiDocId(aiDocId);
-                documentRepository.save(current);
                 referenceArchiveService.finalizeAnalysisMirror(current, settings);
                 log.info("文档向量化完成: {} -> {}", docId, aiDocId);
             } catch (Exception e) {
@@ -101,17 +105,46 @@ public class DocumentService {
         return saved;
     }
 
-    public List<Document> list() {
-        return documentRepository.findAll();
+    /**
+     * 返回文档列表及最新任务状态摘要。
+     *
+     * @return 按创建时间返回的文档摘要
+     */
+    public List<DocumentSummaryResponse> list() {
+        return documentRepository.findAll().stream()
+                .map(document -> DocumentSummaryResponse.from(
+                        document,
+                        analysisTaskRepository.findFirstByDocumentIdOrderByCreatedAtDesc(document.getId()).orElse(null)))
+                .collect(Collectors.toList());
     }
 
+    /**
+     * 查询单个文档。
+     *
+     * @param id 文档 ID
+     * @return 文档，不存在时返回 null
+     */
     public Document getById(String id) {
         return documentRepository.findById(id).orElse(null);
     }
 
-    @Transactional
+    /**
+     * 先等待活动分析任务确认终止，再删除文档及其外部资源。
+     *
+     * @param id 文档 ID
+     * @throws Exception 外部资源删除失败
+     * @throws DocumentDeletionInProgressException 取消确认超时
+     */
     public void delete(String id) throws Exception {
+        if (!analysisService.beginDocumentDeletion(id)) {
+            return;
+        }
+        if (!analysisService.awaitCancellation(id)) {
+            throw new DocumentDeletionInProgressException(
+                    "分析服务未在规定时间内确认终止，文档和资源已保留，请稍后重试删除");
+        }
         referenceArchiveService.deleteSourceDocumentWithMirrors(id);
+        analysisService.removeTasksForDeletedDocument(id);
     }
 
     private void ensureBucket() throws Exception {

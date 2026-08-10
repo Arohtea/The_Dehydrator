@@ -1,6 +1,10 @@
+import json
 from typing import Literal, TypeVar
 
+from json_repair import repair_json
 from pydantic import BaseModel, Field, ValidationError
+
+from services import strip_markdown_json
 
 
 class ArgumentStep(BaseModel):
@@ -56,13 +60,18 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 def parse_and_validate(model: type[ModelT], text: str) -> dict:
-    """限制 LLM 输出大小并用结构化模型过滤异常字段和枚举值。"""
+    """清理、修复并校验 LLM 输出，始终返回结构化字典。"""
     if len(text) > 200_000:
-        return {"raw": "模型输出超过系统限制"}
-    try:
-        import json
+        raise ValueError("模型输出超过系统限制")
 
-        value = json.loads(text)
+    cleaned = strip_markdown_json(text)
+    try:
+        try:
+            value = json.loads(cleaned)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            value = repair_json(cleaned, return_objects=True)
         return model.model_validate(value).model_dump(mode="json")
-    except (ValueError, TypeError, ValidationError):
-        return {"raw": "模型输出格式无效"}
+    except ValidationError as error:
+        raise ValueError(f"模型输出不符合 {model.__name__} 结构") from error
+    except Exception as error:
+        raise ValueError("模型输出无法解析为结构化 JSON") from error

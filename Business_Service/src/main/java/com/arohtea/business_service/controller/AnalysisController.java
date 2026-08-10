@@ -2,6 +2,8 @@ package com.arohtea.business_service.controller;
 
 import com.arohtea.business_service.model.AnalysisTask;
 import com.arohtea.business_service.model.Document;
+import com.arohtea.business_service.dto.AnalysisTaskResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.arohtea.business_service.service.AnalysisService;
 import com.arohtea.business_service.service.DocumentService;
 import com.arohtea.business_service.service.RequestRateLimiter;
@@ -21,6 +23,7 @@ public class AnalysisController {
     private final AnalysisService analysisService;
     private final DocumentService documentService;
     private final RequestRateLimiter requestRateLimiter;
+    private final ObjectMapper objectMapper;
 
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody Map<String, Object> body) {
@@ -40,7 +43,7 @@ public class AnalysisController {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "文档不存在"));
         }
-        if (doc.getAiDocId() == null) {
+        if (doc.getAiDocId() == null || doc.getAiDocId().isBlank()) {
             return ResponseEntity.status(202)
                     .body(Map.of("error", "文档正在向量化，请稍后再试"));
         }
@@ -50,8 +53,8 @@ public class AnalysisController {
         }
         try {
             AnalysisTask task = analysisService.createTask(
-                    docId, doc.getAiDocId(), mode, referenceLibraryIds);
-            return ResponseEntity.ok(task);
+                    docId, mode, referenceLibraryIds);
+            return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
         } catch (IllegalArgumentException exception) {
             return ResponseEntity.unprocessableEntity()
                     .body(Map.of("error", exception.getMessage()));
@@ -68,14 +71,15 @@ public class AnalysisController {
         if (task == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(task);
+        return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
     }
 
     @GetMapping("/document/{documentId}")
-    public ResponseEntity<List<AnalysisTask>> getByDocument(
+    public ResponseEntity<List<AnalysisTaskResponse>> getByDocument(
             @PathVariable("documentId") String documentId) {
-        return ResponseEntity.ok(
-                analysisService.getByDocumentId(documentId));
+        return ResponseEntity.ok(analysisService.getByDocumentId(documentId).stream()
+                .map(task -> AnalysisTaskResponse.from(task, objectMapper))
+                .toList());
     }
 
     @PostMapping("/task/{taskId}/cancel")
@@ -84,7 +88,7 @@ public class AnalysisController {
         if (task == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(task);
+        return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
     }
 
     private List<String> extractStringList(Object value) {

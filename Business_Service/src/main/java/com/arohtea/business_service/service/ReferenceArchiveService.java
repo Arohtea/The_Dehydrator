@@ -154,6 +154,7 @@ public class ReferenceArchiveService {
                 });
     }
 
+    @Transactional
     public void deleteSourceDocumentWithMirrors(String documentId) {
         Document document = documentRepository.findById(documentId).orElse(null);
         if (document == null) {

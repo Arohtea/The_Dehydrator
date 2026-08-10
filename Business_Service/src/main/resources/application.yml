@@ -66,6 +66,9 @@ analysis:
   redis:
     stream-prefix: ${REDIS_STREAM_PREFIX}
     cancel-prefix: ${REDIS_CANCEL_PREFIX}
+    stream-max-length: ${BUSINESS_REDIS_STREAM_MAX_LENGTH:10000}
+    stream-ttl-seconds: ${BUSINESS_REDIS_STREAM_TTL_SECONDS:86400}
+    read-block-ms: ${BUSINESS_REDIS_STREAM_READ_BLOCK_MS:5000}
   upload-rate-capacity: ${BUSINESS_UPLOAD_RATE_CAPACITY}
   start-rate-capacity: ${BUSINESS_ANALYSIS_RATE_CAPACITY}
   rate-window-seconds: ${BUSINESS_RATE_WINDOW_SECONDS}
@@ -73,4 +76,5 @@ analysis:
   task-timeout-minutes: ${BUSINESS_TASK_TIMEOUT_MINUTES}
   task-cleanup-interval-ms: ${BUSINESS_TASK_CLEANUP_INTERVAL_MS}
   cancel-ttl-minutes: ${BUSINESS_CANCEL_TTL_MINUTES}
+  cancel-wait-ms: ${BUSINESS_CANCEL_WAIT_MS:90000}
   sse-timeout-ms: ${BUSINESS_SSE_TIMEOUT_MS}

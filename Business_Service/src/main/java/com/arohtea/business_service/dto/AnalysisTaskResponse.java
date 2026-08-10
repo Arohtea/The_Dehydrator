@@ -60,6 +60,7 @@ public record AnalysisTaskResponse(
         try {
             JsonNode node = mapper.readTree(value);
             if (node == null || node.isNull()) return null;
+            if (node.isObject() && node.has("raw")) return null;
             if (objectExpected && !node.isObject()) return null;
             if (!objectExpected && !node.isArray()) return null;
             return node;

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { storeToRefs } from 'pinia'
@@ -18,19 +18,25 @@ const analysisTargetDoc = ref(null)
 const analysisMode = ref('deep')
 const selectedLibraryIds = ref([])
 const startingAnalysis = ref(false)
+let statusRefreshTimer = null
+
+const activeAnalysisStatuses = new Set(['PENDING', 'PROCESSING', 'CANCELLING'])
 
 const analysisModeLabel = computed(() => analysisMode.value === 'quick' ? '快速分析' : '深度分析')
 
 onMounted(async () => {
   await Promise.all([store.fetchDocuments(), store.fetchReferenceLibraries()])
-  animateItems()
+  statusRefreshTimer = setInterval(refreshActiveDocuments, 3000)
 })
 
-watch(loading, async (newVal) => {
-  if (!newVal) {
-    await nextTick()
-    animateItems()
-  }
+onUnmounted(() => {
+  if (statusRefreshTimer) clearInterval(statusRefreshTimer)
+})
+
+watch(loading, async (isLoading) => {
+  if (isLoading) return
+  await nextTick()
+  animateItems()
 })
 
 function animateItems() {
@@ -46,6 +52,7 @@ function animateItems() {
 }
 
 function openAnalysisDialog(doc, mode) {
+  if (analysisUnavailable(doc)) return
   analysisTargetDoc.value = doc
   analysisMode.value = mode
   selectedLibraryIds.value = []
@@ -61,7 +68,7 @@ function toggleLibrarySelection(libraryId) {
 }
 
 async function confirmStartAnalysis() {
-  if (!analysisTargetDoc.value || startingAnalysis.value) return
+  if (!analysisTargetDoc.value || startingAnalysis.value || analysisUnavailable(analysisTargetDoc.value)) return
   startingAnalysis.value = true
   try {
     const task = await store.startAnalysis(
@@ -104,8 +111,50 @@ async function confirmRemove() {
   try {
     await store.removeDocument(docPendingDelete.value.id)
     docPendingDelete.value = null
+  } catch (error) {
+    alert(error?.response?.data?.error || '删除失败，文档和资源已保留')
+    await store.fetchDocuments()
   } finally {
     deleting.value = false
+  }
+}
+
+function isAnalysisActive(doc) {
+  return activeAnalysisStatuses.has(doc.analysisStatus)
+}
+
+function analysisUnavailable(doc) {
+  return doc.deleting || doc.vectorStatus === 'PROCESSING' || isAnalysisActive(doc)
+}
+
+function statusLabel(doc) {
+  if (doc.deleting) return '删除中'
+  if (doc.vectorStatus === 'PROCESSING') return '向量化中'
+  const labels = {
+    PENDING: '等待分析',
+    PROCESSING: '分析中',
+    CANCELLING: '终止中',
+    COMPLETED: '已完成',
+    FAILED: '失败',
+    CANCELLED: '已取消',
+  }
+  return labels[doc.analysisStatus] || '待分析'
+}
+
+function statusClass(doc) {
+  if (doc.deleting || doc.analysisStatus === 'CANCELLING') return 'bg-amber-50 text-amber-700'
+  if (doc.vectorStatus === 'PROCESSING' || isAnalysisActive(doc)) return 'bg-blue-50 text-blue-700'
+  if (doc.analysisStatus === 'COMPLETED') return 'bg-green-50 text-green-700'
+  if (doc.analysisStatus === 'FAILED') return 'bg-red-50 text-red-700'
+  return 'bg-gray-100 text-text-muted'
+}
+
+async function refreshActiveDocuments() {
+  if (loading.value || !documents.value.some(doc => analysisUnavailable(doc))) return
+  try {
+    await store.fetchDocuments({ silent: true })
+  } catch {
+    // 列表已有内容时，短暂刷新失败不覆盖当前状态。
   }
 }
 </script>
@@ -133,19 +182,34 @@ async function confirmRemove() {
           <div>
             <p class="font-medium">{{ doc.filename }}</p>
             <p class="text-xs text-text-muted">{{ new Date(doc.createdAt).toLocaleString() }}</p>
+            <div class="mt-2 flex items-center gap-2 flex-wrap">
+              <span class="rounded-full px-2.5 py-1 text-xs" :class="statusClass(doc)">
+                {{ statusLabel(doc) }}
+              </span>
+              <span v-if="isAnalysisActive(doc)" class="text-xs text-text-muted">
+                {{ doc.analysisCurrentStep || '准备中' }} · {{ doc.analysisProgress || 0 }}%
+              </span>
+            </div>
+            <div v-if="isAnalysisActive(doc)" class="mt-2 h-1.5 w-64 max-w-full overflow-hidden rounded-full bg-gray-100">
+              <div class="h-full rounded-full bg-primary transition-all duration-500" :style="{ width: `${doc.analysisProgress || 0}%` }" />
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-2">
           <button
             @click.stop="openAnalysisDialog(doc, 'quick')"
+            :disabled="analysisUnavailable(doc)"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-sm rounded-lg hover:bg-accent/90 transition-colors duration-200 cursor-pointer"
+            :class="{ 'cursor-not-allowed opacity-50': analysisUnavailable(doc) }"
           >
             <Zap class="w-3.5 h-3.5" />
             快速分析
           </button>
           <button
             @click.stop="openAnalysisDialog(doc, 'deep')"
+            :disabled="analysisUnavailable(doc)"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm rounded-lg hover:bg-primary-light transition-colors duration-200 cursor-pointer"
+            :class="{ 'cursor-not-allowed opacity-50': analysisUnavailable(doc) }"
           >
             <Telescope class="w-3.5 h-3.5" />
             深度分析
@@ -239,7 +303,12 @@ async function confirmRemove() {
       <div class="w-full max-w-sm rounded-xl border border-border bg-white p-6 shadow-xl">
         <h2 class="font-heading text-lg font-semibold text-text">确认删除</h2>
         <p class="mt-3 text-sm leading-relaxed text-text-muted">
-          确定删除「{{ docPendingDelete.filename }}」？删除后将同时移除文档记录和分析结果。
+          <template v-if="isAnalysisActive(docPendingDelete)">
+            「{{ docPendingDelete.filename }}」正在分析。确认后会先终止分析，收到终止确认后才删除文档及相关资源。
+          </template>
+          <template v-else>
+            确定删除「{{ docPendingDelete.filename }}」？删除后将同时移除文档记录和分析结果。
+          </template>
         </p>
         <div class="mt-6 flex justify-end gap-3">
           <button
@@ -254,7 +323,7 @@ async function confirmRemove() {
             :disabled="deleting"
             class="rounded-lg bg-red-500 px-4 py-2 text-sm text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {{ deleting ? '删除中...' : '确认删除' }}
+            {{ deleting ? (isAnalysisActive(docPendingDelete) ? '终止并删除中...' : '删除中...') : (isAnalysisActive(docPendingDelete) ? '终止并删除' : '确认删除') }}
           </button>
         </div>
       </div>

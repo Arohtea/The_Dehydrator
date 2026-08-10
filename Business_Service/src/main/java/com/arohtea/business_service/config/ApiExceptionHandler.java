@@ -1,5 +1,7 @@
 package com.arohtea.business_service.config;
 
+import com.arohtea.business_service.model.AnalysisConflictException;
+import com.arohtea.business_service.model.DocumentDeletionInProgressException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -49,5 +51,17 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(Map.of("error", exception.getMessage() == null ? "请求参数无效" : exception.getMessage()));
+    }
+
+    @ExceptionHandler(AnalysisConflictException.class)
+    public ResponseEntity<Map<String, String>> handleAnalysisConflict(AnalysisConflictException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", exception.getMessage()));
+    }
+
+    @ExceptionHandler(DocumentDeletionInProgressException.class)
+    public ResponseEntity<Map<String, String>> handleDeletionTimeout(DocumentDeletionInProgressException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", exception.getMessage()));
     }
 }

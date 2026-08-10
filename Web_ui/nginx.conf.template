@@ -3,6 +3,18 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    location /api/analysis/stream/ {
+        proxy_pass ${WEB_NGINX_API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
     location /api/ {
         proxy_pass ${WEB_NGINX_API_UPSTREAM};
         proxy_set_header Host $host;

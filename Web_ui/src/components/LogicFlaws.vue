@@ -6,7 +6,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 gsap.registerPlugin(ScrollTrigger)
 
-defineProps({ data: [Object, String] })
+defineProps({ data: Object })
 
 const severityMap = {
   high: { label: '高', cls: 'bg-red-100 text-red-700' },
@@ -37,9 +37,7 @@ onMounted(async () => {
 })
 </script>
 <template>
-  <div v-if="!data" class="text-text-muted">暂无数据</div>
-
-  <div v-else-if="typeof data === 'string'" class="whitespace-pre-wrap text-sm leading-relaxed">{{ data }}</div>
+  <div v-if="!data" class="text-text-muted">结果不可用</div>
 
   <div v-else class="space-y-4" ref="containerRef">
     <!-- 总评分 -->

@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     ai_max_search_results: int = Field(gt=0)
     ai_qdrant_scroll_page_size: int = Field(gt=0, le=10_000)
     ai_cancel_check_interval_tokens: int = Field(gt=0)
+    ai_stream_batch_chars: int = Field(default=256, gt=0)
+    ai_stream_batch_ms: int = Field(default=100, gt=0)
+    ai_redis_stream_max_length: int = Field(default=10_000, gt=0)
+    ai_redis_stream_ttl_seconds: int = Field(default=86_400, gt=0)
     ai_upload_rate_limit: str
     ai_delete_rate_limit: str
     ai_archive_rate_limit: str

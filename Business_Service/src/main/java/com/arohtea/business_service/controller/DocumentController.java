@@ -1,6 +1,7 @@
 package com.arohtea.business_service.controller;
 
 import com.arohtea.business_service.model.Document;
+import com.arohtea.business_service.dto.DocumentSummaryResponse;
 import com.arohtea.business_service.service.DocumentService;
 import com.arohtea.business_service.service.RequestRateLimiter;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ public class DocumentController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Document>> list() {
+    public ResponseEntity<List<DocumentSummaryResponse>> list() {
         return ResponseEntity.ok(documentService.list());
     }
 

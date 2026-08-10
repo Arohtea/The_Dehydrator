@@ -11,13 +11,17 @@ export const useDocumentStore = defineStore('document', () => {
   const referenceFolders = ref([])
   const referenceCategories = ref([])
 
-  async function fetchDocuments() {
-    loading.value = true
+  async function fetchDocuments(options = {}) {
+    const { silent = false } = options
+    if (!silent) loading.value = true
     try {
       const { data } = await api.getDocuments()
+      if (!Array.isArray(data)) {
+        throw new Error('文档列表响应格式错误')
+      }
       documents.value = data
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 

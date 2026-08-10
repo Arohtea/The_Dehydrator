@@ -126,17 +126,25 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
     from services import strip_markdown_json
     try:
         result = parse_and_validate(CrossValidationResult, strip_markdown_json(text))
-        if "raw" in result:
-            return result
-        if not result.get("local_evidence_summary"):
-            result["local_evidence_summary"] = "已基于模型自身通用知识进行判断"
-        if not result.get("reference_evidence_summary"):
-            result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
-        if quick_mode and not result.get("web_evidence_summary"):
-            result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
-        return result
-    except json.JSONDecodeError:
-        return {"raw": text}
+    except ValueError:
+        return {
+            "claim": claim,
+            "verification_status": "unverifiable",
+            "confidence": 0,
+            "local_evidence_summary": "结果不可用，模型输出无法解析",
+            "reference_evidence_summary": "已提供参考资料" if reference_results else "未提供参考资料",
+            "web_evidence_summary": "未执行联网验证（快速分析模式）" if quick_mode else "结果不可用",
+            "contradictions": [],
+            "supplements": [],
+            "conclusion": "本条交叉验证结果不可用，请重新分析",
+        }
+    if not result.get("local_evidence_summary"):
+        result["local_evidence_summary"] = "已基于模型自身通用知识进行判断"
+    if not result.get("reference_evidence_summary"):
+        result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
+    if quick_mode and not result.get("web_evidence_summary"):
+        result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
+    return result
 
 
 def cross_validate(argument_chain: dict, text_config: AIModelConfig,

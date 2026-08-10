@@ -76,6 +76,31 @@ async def _publish_failed(task_id: str, error: str):
         log.error("发送失败消息失败: %s", task_id, exc_info=True)
 
 
+async def _publish_cancelled(task_id: str):
+    """把 AI Service 已观察到的取消信号明确回传给 Business Service。"""
+    try:
+        conn = await get_connection()
+        async with conn:
+            ch = await conn.channel()
+            exchange = await ch.declare_exchange(
+                settings.rabbitmq_analysis_exchange,
+                aio_pika.ExchangeType.DIRECT,
+                durable=True,
+            )
+            await exchange.publish(
+                aio_pika.Message(json.dumps({
+                    "source": MESSAGE_SOURCE,
+                    "taskId": task_id,
+                    "cancelled": True,
+                    "status": "CANCELLED",
+                    "currentStep": "已确认终止",
+                }, ensure_ascii=False).encode()),
+                routing_key=settings.rabbitmq_result_queue,
+            )
+    except Exception:
+        log.error("发送取消确认失败: %s", task_id, exc_info=True)
+
+
 async def _process_message(message: aio_pika.IncomingMessage):
     task_id = None
     request_secrets = []
@@ -157,6 +182,9 @@ async def _process_message(message: aio_pika.IncomingMessage):
             return chain, flaws, validation
 
         chain, flaws, validation = await asyncio.to_thread(_run_analysis)
+        from services.stream_publisher import AnalysisCancelled, is_cancelled
+        if is_cancelled(task_id):
+            raise AnalysisCancelled(task_id)
 
         result = {
             "source": MESSAGE_SOURCE,
@@ -182,11 +210,13 @@ async def _process_message(message: aio_pika.IncomingMessage):
         await message.ack()
         log.info("分析完成: %s", task_id)
     except Exception as e:
-        await message.nack(requeue=False)
-        from services.stream_publisher import AnalysisCancelled
-        if isinstance(e, AnalysisCancelled):
+        from services.stream_publisher import AnalysisCancelled, is_cancelled
+        if isinstance(e, AnalysisCancelled) or (task_id and is_cancelled(task_id)):
+            await _publish_cancelled(task_id)
+            await message.ack()
             log.info("分析已取消: %s", task_id)
         else:
+            await message.nack(requeue=False)
             safe_error = _safe_error(e, request_secrets)
             log.error("分析失败: %s", safe_error, exc_info=True)
             if task_id:

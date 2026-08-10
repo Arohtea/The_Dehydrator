@@ -26,7 +26,7 @@ erDiagram
     ANALYSIS_TASKS {
         varchar id PK "UUID 格式字符串，分析任务 ID"
         varchar document_id "逻辑关联 documents.id"
-        varchar status "PENDING/PROCESSING/COMPLETED/FAILED/CANCELLED"
+        varchar status "PENDING/PROCESSING/CANCELLING/COMPLETED/FAILED/CANCELLED"
         varchar mode "deep 或 quick"
         text reference_library_ids "JSON 数组，逻辑 N:M"
         text reference_library_names "JSON 数组快照"
@@ -147,7 +147,7 @@ flowchart TD
     B3 -- 未就绪 --> E2[400 或 202：稍后再试]
     B3 -- 通过 --> P4[创建 analysis_tasks，状态 PENDING]
     P4 --> MQ1[RabbitMQ analysis.request]
-    MQ1 --> P5[更新任务为 PROCESSING]
+    MQ1 --> P5[提交后派发器更新为 PROCESSING]
     MQ1 --> C1[AI Consumer 接收任务]
     C1 --> Q2[Qdrant scroll 获取分析文档分块]
     Q2 --> AC1[论据链 MAP：并发调用 LLM]
@@ -170,23 +170,23 @@ flowchart TD
 
     C1 -. 分步进度 .-> MQ3[RabbitMQ analysis.progress]
     MQ3 -.-> P7[更新 progress / current_step]
-    C1 -. LLM token .-> REDIS1[Redis Pub/Sub analysis:stream:taskId]
+    C1 -. LLM token .-> REDIS1[Redis Stream analysis:stream:taskId]
     REDIS1 -.-> SSE[Business Service SSE /api/analysis/stream/taskId]
     SSE -.-> UI[Web UI 实时展示]
 
     U3[用户点击取消] --> W3[POST /api/analysis/task/taskId/cancel]
     W3 --> REDIS2[写入 analysis:cancel:taskId，TTL 30 分钟]
-    W3 --> CANCEL[任务标记 CANCELLED]
+    W3 --> CANCEL[任务标记 CANCELLING]
     REDIS2 -.定期检查.-> C1
 ```
 
 ### 3.1 主链路的关键分支
 
-1. 文档上传返回的是 PostgreSQL 文档记录；向量化在后台异步执行，`ai_doc_id` 为空期间不能开始分析。
+1. 文档上传返回的是 PostgreSQL 文档记录；向量化在后台异步执行，`ai_doc_id` 为空期间不能开始分析，异步回写受文档行锁和删除状态保护。
 2. RabbitMQ 发送失败时，任务直接转为 `FAILED`，当前步骤为“任务提交失败”。
 3. AI Service 的分析消费只读取 `source_type=analysis_document` 的向量，参考资料只在交叉验证阶段通过 `source_type=reference_document` 和 `library_id` 检索。
 4. 快速模式不执行联网搜索；深度模式要求数据库已配置 Tavily API Key，并为每个论点调用 Tavily Search API。
-5. Token 流和任务结果是两条不同通道：Token 走 Redis Pub/Sub + SSE，最终 JSON 结果走 RabbitMQ + PostgreSQL。
+5. Token 流和任务结果是两条不同通道：Token 走 Redis Stream + SSE（支持回放和 Last-Event-ID 续传），最终 JSON 结果走 RabbitMQ + PostgreSQL；任务终态会写回同一 Stream 收口 SSE。
 
 ## 4. 流程图：资料库与自动归档
 
@@ -226,14 +226,16 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
     [*] --> PENDING : createTask 保存任务
-    PENDING --> PROCESSING : RabbitMQ 请求发送成功
+    PENDING --> PROCESSING : 事务提交后派发器发送请求
     PENDING --> FAILED : RabbitMQ 发送异常
 
     PROCESSING --> PROCESSING : progress 消息更新 progress/current_step
     PROCESSING --> COMPLETED : analysis.result 成功
     PROCESSING --> FAILED : analysis.result.failed=true
-    PROCESSING --> FAILED : 定时清理：创建超过 30 分钟
-    PROCESSING --> CANCELLED : 取消 API 写 Redis 取消键并保存状态
+    PENDING --> CANCELLING : 取消 API 写 Redis 取消键
+    PROCESSING --> CANCELLING : 取消 API 写 Redis 取消键
+    CANCELLING --> CANCELLED : AI Service 发布取消确认
+    PROCESSING --> CANCELLING : 定时清理：创建超过 30 分钟
 
     COMPLETED --> [*]
     FAILED --> [*]
@@ -247,8 +249,8 @@ stateDiagram-v2
     end note
 
     note right of COMPLETED
-      终态守卫：已完成、失败、取消的任务
-      不再接受迟到的结果或进度更新。
+      终态守卫：终止中的任务不接受迟到的成功结果；
+      只有 AI Service 取消确认才能进入 CANCELLED。
     end note
 ```
 
@@ -257,12 +259,12 @@ stateDiagram-v2
 | 控制点 | 实现位置 | 行为 |
 | --- | --- | --- |
 | 开始前置条件 | `AnalysisController.start` | `documentId` 必填，文档存在且 `ai_doc_id` 已回填；否则返回 400/202 |
-| 状态进入处理中 | `AnalysisService.createTask` | 任务先保存 `PENDING`，消息发送成功后保存 `PROCESSING` |
-| 取消 | `AnalysisService.cancelTask` | 只允许取消 `PROCESSING`；Redis 取消键保留 30 分钟；数据库立即为 `CANCELLED` |
+| 状态进入处理中 | `AnalysisService.createTask` / `AnalysisTaskDispatcher` | 事务先保存 `PENDING`，提交后投递消息并更新 `PROCESSING` |
+| 取消 | `AnalysisService.cancelTask` | `PENDING/PROCESSING` 进入 `CANCELLING`；Redis 取消键保留 30 分钟；AI 确认后才为 `CANCELLED` |
 | 取消感知 | `stream_publisher.py` | 首 token 前、每 10 个 token、流结束后检查取消键 |
 | 进度更新 | `AnalysisResultListener.onProgress` | 仅 `PROCESSING` 任务接受进度消息 |
 | 结果幂等/迟到保护 | `AnalysisResultListener.onResult` | `COMPLETED`、`FAILED`、`CANCELLED` 任务跳过后续结果 |
-| 超时 | `AnalysisService.cleanupTimedOutTasks` | 每 5 分钟扫描 `PENDING/PROCESSING` 且创建超过 30 分钟的任务并置为 `FAILED` |
+| 超时 | `AnalysisService.cleanupTimedOutTasks` | 每 5 分钟扫描 `PENDING/PROCESSING` 且创建超过 30 分钟的任务并进入 `CANCELLING` |
 | 并行度 | AI `argument_chain.py` / `cross_validation.py` | 使用线程池；`map_workers` 控制论据 MAP 与交叉验证的并发上限 |
 | 消费背压 | AI `mq_consumer.py` | RabbitMQ consumer `prefetch_count=1`，单次只处理一个分析任务 |
 
@@ -291,8 +293,8 @@ flowchart LR
     AI -- analysis.progress --> MQ
     AI -- analysis.result --> MQ
     MQ -- progress/result Listener --> BS
-    AI -- token 发布 --> R
-    BS -- Redis Pub/Sub 订阅 --> R
+    AI -- token XADD --> R
+    BS -- Redis Stream 回放/阻塞读取 --> R
     BS -- 写 cancel key --> R
     AI -- 检查 cancel key --> R
     AI -- 向量写入/检索/删除 --> V
@@ -308,7 +310,7 @@ flowchart LR
 | RabbitMQ 请求 | `analysis.request` | Business -> AI | 投递任务 ID、AI 文档 ID、模式、资料库 ID、模型配置及深度分析所需的 Tavily Key |
 | RabbitMQ 进度 | `analysis.progress` | AI -> Business | 更新任务百分比和当前步骤 |
 | RabbitMQ 结果 | `analysis.result` | AI -> Business | 保存三类分析 JSON，并将任务置为完成或失败 |
-| Redis 流 | `analysis:stream:{taskId}` | AI -> Business SSE -> UI | 发送逐 token 文本和步骤完成事件 |
+| Redis Stream | `analysis:stream:{taskId}` | AI/Business -> SSE -> UI | 保存批量 token、步骤、进度和终态事件，支持回放、续传、长度限制和 TTL |
 | Redis 取消键 | `analysis:cancel:{taskId}` | Business -> AI | 协作式取消信号，TTL 30 分钟 |
 
 ## 7. 现状边界与后续数据库演进建议
@@ -316,7 +318,7 @@ flowchart LR
 - 当前 ER 里的逻辑外键没有数据库级约束，删除和引用校验依赖 `ReferenceArchiveService`、`ReferenceLibraryService` 等业务代码；若后续需要更强一致性，应评估补充 FK、索引和事务边界。
 - `analysis_tasks.reference_library_ids` / `reference_library_names` 是 JSON 快照，优点是保留任务当时的资料库名称，缺点是无法直接做关系查询和级联校验。若需要审计或按资料库统计，建议新增 `analysis_task_reference_libraries(task_id, library_id, library_name_snapshot)` 中间表，并保留名称快照字段。
 - `argument_chain`、`logic_flaws`、`cross_validation` 当前作为 TEXT 保存 JSON；如果需要按论点、漏洞类型或验证结论检索，建议拆出结果明细表或使用 PostgreSQL `jsonb` 加索引。
-- 任务的“取消”是协作式的：业务服务先写数据库终态，AI Service 再在流式调用检查 Redis 后停止。因此取消请求与已经完成的结果可能并发到达，当前通过终态守卫保证不会覆盖 `CANCELLED`。
+- 任务的“取消”是协作式的：业务服务先写 `CANCELLING` 和 Redis 信号，AI Service 在流式调用中检查并通过 RabbitMQ 回传确认，业务服务再进入 `CANCELLED`；取消请求与已经完成的结果并发到达时由任务行锁和终态守卫收口。
 - Qdrant 与 PostgreSQL 没有跨存储事务。代码对删除和异步向量化采用补偿式清理；生产环境应增加失败重试、孤儿向量扫描和向量化失败状态字段。
 
 ## 8. 代码依据

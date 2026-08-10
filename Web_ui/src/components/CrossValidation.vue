@@ -7,7 +7,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 gsap.registerPlugin(ScrollTrigger)
 
 const props = defineProps({
-  data: [Array, String],
+  data: Array,
   mode: {
     type: String,
     default: 'deep',
@@ -59,9 +59,7 @@ const leave = (el, done) => {
 </script>
 
 <template>
-  <div v-if="!props.data" class="text-text-muted">暂无数据</div>
-
-  <div v-else-if="typeof props.data === 'string'" class="whitespace-pre-wrap text-sm leading-relaxed">{{ props.data }}</div>
+  <div v-if="!props.data" class="text-text-muted">结果不可用</div>
 
   <div v-else class="space-y-4" ref="containerRef">
     <div v-for="(item, i) in props.data" :key="i"

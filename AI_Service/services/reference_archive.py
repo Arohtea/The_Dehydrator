@@ -29,8 +29,6 @@ def _suggest_folder_and_category(filename: str, document_preview: str,
         item.get("text", "") for item in response.content if isinstance(item, dict)
     )
     result = parse_and_validate(ReferenceClassificationResult, strip_markdown_json(content))
-    if "raw" in result:
-        raise ValueError("AI 分类结果格式无效")
     return {
         "folder_name": result.get("folder_name"),
         "category_name": result.get("category_name"),

@@ -22,6 +22,7 @@ public class AnalysisResultListener {
 
     private final AnalysisTaskRepository taskRepository;
     private final ObjectMapper objectMapper;
+    private final AnalysisStreamService streamService;
 
     @RabbitListener(queues = "${messaging.analysis.result-queue}")
     @Transactional
@@ -32,19 +33,36 @@ public class AnalysisResultListener {
                 log.warn("忽略未知来源的分析结果消息");
                 return;
             }
-            String taskId = node.get("taskId").asText();
+            String taskId = node.path("taskId").asText("");
+            if (taskId.isBlank()) {
+                log.warn("分析结果消息缺少 taskId");
+                return;
+            }
 
-            AnalysisTask task = taskRepository.findById(taskId)
+            AnalysisTask task = taskRepository.findByIdForUpdate(taskId)
                     .orElse(null);
             if (task == null) {
                 log.warn("任务不存在: {}", taskId);
                 return;
             }
 
-            // 终态守卫：已完成/失败/取消的任务不再更新
             TaskStatus status = task.getStatus();
+            if (node.path("cancelled").asBoolean(false)
+                    || "CANCELLED".equalsIgnoreCase(node.path("status").asText())) {
+                if (status == TaskStatus.PROCESSING || status == TaskStatus.PENDING
+                        || status == TaskStatus.CANCELLING) {
+                    task.setStatus(TaskStatus.CANCELLED);
+                    task.setCurrentStep("已确认终止");
+                    task.setCompletedAt(LocalDateTime.now());
+                    taskRepository.save(task);
+                    streamService.publishTerminal(taskId, "CANCELLED", "分析已终止");
+                }
+                return;
+            }
+
+            // 终态守卫：取消中的任务不能被迟到的成功或失败消息覆盖。
             if (status != TaskStatus.PROCESSING) {
-                log.info("任务已处于终态 {}，跳过更新: {}", status, taskId);
+                log.info("任务已处于状态 {}，跳过更新: {}", status, taskId);
                 return;
             }
 
@@ -54,6 +72,7 @@ public class AnalysisResultListener {
                 task.setCurrentStep(node.has("error") ? node.get("error").asText().substring(0, Math.min(500, node.get("error").asText().length())) : "分析失败");
                 task.setCompletedAt(LocalDateTime.now());
                 taskRepository.save(task);
+                streamService.publishTerminal(taskId, "FAILED", task.getCurrentStep());
                 return;
             }
 
@@ -84,6 +103,7 @@ public class AnalysisResultListener {
             task.setStatus(TaskStatus.COMPLETED);
             task.setCompletedAt(LocalDateTime.now());
             taskRepository.save(task);
+            streamService.publishTerminal(taskId, "COMPLETED", task.getCurrentStep());
         } catch (Exception e) {
             log.error("处理分析结果失败", e);
         }
@@ -98,12 +118,19 @@ public class AnalysisResultListener {
                 log.warn("忽略未知来源的分析进度消息");
                 return;
             }
-            String taskId = node.get("taskId").asText();
-            taskRepository.findById(taskId).ifPresent(task -> {
+            String taskId = node.path("taskId").asText("");
+            if (taskId.isBlank()) {
+                log.warn("分析进度消息缺少 taskId");
+                return;
+            }
+            taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
                 if (task.getStatus() != TaskStatus.PROCESSING) return;
-                task.setProgress(node.get("progress").asInt());
-                task.setCurrentStep(node.get("currentStep").asText());
+                int progress = Math.max(0, Math.min(100, node.path("progress").asInt()));
+                String currentStep = node.path("currentStep").asText("分析中...");
+                task.setProgress(progress);
+                task.setCurrentStep(currentStep);
                 taskRepository.save(task);
+                streamService.publishProgress(taskId, progress, currentStep);
             });
         } catch (Exception e) {
             log.error("处理进度更新失败", e);

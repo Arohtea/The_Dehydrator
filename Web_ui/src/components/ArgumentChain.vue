@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 gsap.registerPlugin(ScrollTrigger)
 
-const props = defineProps({ data: [Object, String] })
+const props = defineProps({ data: Object })
 const title = computed(() => props.data?.title)
 const mainClaim = computed(() => props.data?.main_conclusion || props.data?.mainClaim)
 const steps = computed(() => props.data?.argument_chain || props.data?.arguments)
@@ -32,9 +32,7 @@ onMounted(async () => {
 })
 </script>
 <template>
-  <div v-if="!data" class="text-text-muted">暂无数据</div>
-
-  <div v-else-if="typeof data === 'string'" class="whitespace-pre-wrap text-sm leading-relaxed">{{ data }}</div>
+  <div v-if="!data" class="text-text-muted">结果不可用</div>
 
   <div v-else class="space-y-4" ref="containerRef">
     <p v-if="title" class="text-lg font-heading font-semibold">{{ title }}</p>
