@@ -49,7 +49,7 @@ onMounted(async () => {
 
     <!-- 漏洞列表 -->
     <div v-for="(flaw, i) in (data.flaws || [])" :key="i"
-      class="bg-white border border-border rounded-lg p-4 space-y-2 gs-flaw opacity-0">
+      class="bg-white border border-border rounded-lg p-4 space-y-2 gs-flaw">
       <div class="flex items-center gap-2 flex-wrap">
         <AlertTriangle class="w-4 h-4 shrink-0"
           :class="flaw.severity === 'high' ? 'text-red-500' : flaw.severity === 'medium' ? 'text-amber-500' : 'text-blue-500'" />

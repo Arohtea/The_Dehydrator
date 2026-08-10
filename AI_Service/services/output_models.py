@@ -35,6 +35,13 @@ class LogicFlawResult(BaseModel):
     summary: str = Field(default="", max_length=10_000)
 
 
+class WebSource(BaseModel):
+    title: str = Field(default="", max_length=2_000)
+    url: str = Field(default="", max_length=4_000)
+    snippet: str = Field(default="", max_length=10_000)
+    score: float | None = None
+
+
 class CrossValidationResult(BaseModel):
     claim: str = Field(default="", max_length=10_000)
     verification_status: Literal[
@@ -44,6 +51,7 @@ class CrossValidationResult(BaseModel):
     local_evidence_summary: str = Field(default="", max_length=10_000)
     reference_evidence_summary: str = Field(default="", max_length=10_000)
     web_evidence_summary: str = Field(default="", max_length=10_000)
+    web_sources: list[WebSource] = Field(default_factory=list, max_length=5)
     contradictions: list[str] = Field(default_factory=list, max_length=100)
     supplements: list[str] = Field(default_factory=list, max_length=100)
     conclusion: str = Field(default="", max_length=10_000)

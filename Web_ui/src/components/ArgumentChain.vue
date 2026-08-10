@@ -11,6 +11,11 @@ const mainClaim = computed(() => props.data?.main_conclusion || props.data?.main
 const steps = computed(() => props.data?.argument_chain || props.data?.arguments)
 const containerRef = ref(null)
 
+function getClaim(arg, index) {
+  if (typeof arg === 'string') return arg
+  return arg?.claim || `第 ${index + 1} 条论据`
+}
+
 onMounted(async () => {
   await nextTick()
   if (containerRef.value) {
@@ -44,21 +49,27 @@ onMounted(async () => {
 
     <div v-if="steps?.length" class="space-y-1">
       <template v-for="(arg, i) in steps" :key="i">
-        <div class="bg-white border border-border rounded-lg p-4 gs-step opacity-0">
+        <div class="bg-white border border-border rounded-lg p-4 gs-step">
           <div class="flex items-start gap-3">
             <span class="shrink-0 w-6 h-6 rounded-full bg-primary text-white text-xs flex items-center justify-center font-medium">
-              {{ arg.step || i + 1 }}
+              {{ arg?.step || i + 1 }}
             </span>
             <div class="min-w-0">
-              <p class="font-medium mb-1">{{ arg.claim || arg }}</p>
-              <p v-if="arg.evidence" class="text-sm text-text-muted">{{ arg.evidence }}</p>
-              <p v-if="arg.reasoning" class="text-xs text-text-muted mt-1 italic">{{ arg.reasoning }}</p>
+              <p class="mb-3 font-medium leading-relaxed">{{ getClaim(arg, i) }}</p>
+              <div v-if="arg?.evidence" class="mb-2">
+                <p class="mb-1 text-xs font-medium text-primary">证据/数据</p>
+                <p class="text-sm leading-relaxed text-text-muted">{{ arg.evidence }}</p>
+              </div>
+              <div v-if="arg?.reasoning">
+                <p class="mb-1 text-xs font-medium text-text-muted">推理依据</p>
+                <p class="text-sm leading-relaxed text-text-muted">{{ arg.reasoning }}</p>
+              </div>
             </div>
           </div>
         </div>
-        <div v-if="arg.relation_to_next && arg.relation_to_next !== '无' && i < steps.length - 1"
+        <div v-if="arg?.relation_to_next && arg.relation_to_next !== '无' && i < steps.length - 1"
           class="flex justify-center py-1">
-          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-text-muted">{{ arg.relation_to_next }} ↓</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-text-muted">与下一论据的关系：{{ arg.relation_to_next }} ↓</span>
         </div>
       </template>
     </div>

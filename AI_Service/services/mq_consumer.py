@@ -163,7 +163,7 @@ async def _process_message(message: aio_pika.IncomingMessage):
             chain = extract_argument_chain(chunks, task_id=task_id, on_progress=report,
                                            text_config=text_config, map_workers=map_workers)
 
-            report(70, "正在检测逻辑漏洞 & 快速交叉验证..." if mode == "quick" else "正在检测逻辑漏洞 & 深度交叉验证...")
+            report(70, "正在检测逻辑漏洞，并进行本地交叉验证" if mode == "quick" else "正在检测逻辑漏洞，并进行联网交叉验证")
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=settings.ai_analysis_branch_workers) as executor:
                 f_flaws = executor.submit(detect_logic_flaws, chain, task_id=task_id,

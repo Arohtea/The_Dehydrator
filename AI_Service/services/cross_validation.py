@@ -13,14 +13,35 @@ from services.output_models import CrossValidationResult, parse_and_validate
 
 MAX_WEB_QUERY_CHARS = 2_000
 MAX_WEB_EVIDENCE_CHARS = 12_000
+MAX_WEB_SOURCE_SNIPPET_CHARS = 2_000
+
+
+def _normalize_web_sources(results: list[dict]) -> list[dict]:
+    sources = []
+    seen_urls = set()
+    for result in results[:5]:
+        title = str(result.get("title") or "未命名网页").strip()
+        url = str(result.get("url") or "").strip()
+        if url and url in seen_urls:
+            continue
+        if url:
+            seen_urls.add(url)
+        score = result.get("score")
+        sources.append({
+            "title": title,
+            "url": url,
+            "snippet": str(result.get("content") or "").strip()[:MAX_WEB_SOURCE_SNIPPET_CHARS],
+            "score": float(score) if isinstance(score, (int, float)) else None,
+        })
+    return sources
 
 
 def _format_web_evidence(results: list[dict]) -> str:
     evidence = []
     for result in results[:5]:
-        title = str(result.get("title") or "无标题").strip()
+        title = str(result.get("title") or "未命名网页").strip()
         url = str(result.get("url") or "").strip()
-        content = str(result.get("content") or "").strip()
+        content = str(result.get("snippet") or result.get("content") or "").strip()
         score = result.get("score")
         score_text = f"{score:.4f}" if isinstance(score, (int, float)) else "未知"
         evidence.append(
@@ -47,7 +68,7 @@ def _tavily_error_message(error: Exception) -> str:
     return "Tavily 联网搜索失败"
 
 
-def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> str:
+def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> list[dict]:
     if not isinstance(tavily_api_key, str) or not tavily_api_key.strip():
         raise ValueError("未配置 Tavily API Key")
     if is_cancelled(task_id):
@@ -76,7 +97,7 @@ def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> str:
 
     if is_cancelled(task_id):
         raise AnalysisCancelled(task_id)
-    return _format_web_evidence(response.get("results", []))
+    return _normalize_web_sources(response.get("results", []))
 
 
 def _validate_single_claim(claim: str, task_id: str, idx: int,
@@ -100,11 +121,8 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         top_k=3,
     )
     reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
-    web_evidence = (
-        "未执行联网验证（快速分析模式）"
-        if quick_mode
-        else _web_search(claim, task_id, tavily_api_key)
-    )
+    web_sources = [] if quick_mode else _web_search(claim, task_id, tavily_api_key)
+    web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _format_web_evidence(web_sources)
     mode_note = (
         "当前为快速分析模式：只能基于模型自身知识与可选参考资料判断，"
         "禁止把当前上传论文内容当作验证证据，不执行联网搜索。"
@@ -134,6 +152,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
             "local_evidence_summary": "结果不可用，模型输出无法解析",
             "reference_evidence_summary": "已提供参考资料" if reference_results else "未提供参考资料",
             "web_evidence_summary": "未执行联网验证（快速分析模式）" if quick_mode else "结果不可用",
+            "web_sources": web_sources,
             "contradictions": [],
             "supplements": [],
             "conclusion": "本条交叉验证结果不可用，请重新分析",
@@ -144,6 +163,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
     if quick_mode and not result.get("web_evidence_summary"):
         result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
+    result["web_sources"] = web_sources
     return result
 
 
@@ -214,9 +234,9 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
             results[idx] = future.result()
             completed_count += 1
             if on_progress:
-                label = "交叉验证（快速）" if mode == "quick" else "交叉验证"
+                label = "正在进行本地交叉验证" if mode == "quick" else "正在进行联网交叉验证"
                 on_progress(
                     80 + int((completed_count / total) * 15),
-                    f"{label} ({completed_count}/{total})",
+                    f"{label}（{completed_count}/{total}）",
                 )
     return results

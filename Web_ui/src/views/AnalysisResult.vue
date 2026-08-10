@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDocumentStore } from '@/stores/document'
-import { Loader2, RefreshCw, X, Info } from 'lucide-vue-next'
+import { ChevronDown, Info, Loader2, RefreshCw, X } from 'lucide-vue-next'
+import { jsonrepair } from 'jsonrepair'
 import * as api from '@/api'
 import ArgumentChain from '@/components/ArgumentChain.vue'
 import LogicFlaws from '@/components/LogicFlaws.vue'
@@ -19,6 +20,9 @@ const cancelling = ref(false)
 const streamStages = ref([])
 const streamStep = ref('')
 const streamPanelRef = ref(null)
+const analysisProcessExpanded = ref(true)
+const previewQueue = new Set()
+let previewFrame = null
 let timer = null
 let reconnectTimer = null
 let eventSource = null
@@ -86,7 +90,7 @@ watch(() => props.id, (newId, oldId) => {
   reconnectTimer = null
   currentTask.value = null
   store.currentTask = null
-  resetStreamState()
+  resetStreamState(false)
   loadLatestTask()
 })
 
@@ -94,6 +98,7 @@ onUnmounted(() => {
   stopPolling()
   closeSSE()
   if (reconnectTimer) clearTimeout(reconnectTimer)
+  cancelPreviewFrame()
 })
 
 async function loadLatestTask() {
@@ -108,7 +113,7 @@ async function loadLatestTask() {
     if (currentTask.value && isActiveTask.value) {
       startMonitoring(currentTask.value.id, true)
     } else if (currentTask.value) {
-      resetStreamState()
+      resetStreamState(false)
       streamTaskId = currentTask.value.id
       connectSSE(currentTask.value.id)
     }
@@ -122,7 +127,7 @@ async function loadLatestTask() {
 
 function startMonitoring(taskId, resetStream = false) {
   stopPolling()
-  if (resetStream) resetStreamState()
+  if (resetStream) resetStreamState(true)
   streamTaskId = taskId
   polling.value = true
   cancelling.value = currentTask.value?.status === 'CANCELLING'
@@ -140,6 +145,7 @@ async function pollCurrentTask() {
       stopPolling()
       closeSSE()
       cancelling.value = false
+      analysisProcessExpanded.value = false
     }
   } catch {
     pollError.value = '状态同步暂时失败，系统会继续重试'
@@ -195,23 +201,33 @@ function handleStreamMessage(message) {
     return
   }
 
+  const messageKind = String(message.kind || '').toLowerCase()
+  if (['completed', 'failed', 'cancelled'].includes(messageKind)) {
+    streamTerminal = true
+    analysisProcessExpanded.value = false
+    closeSSE()
+    return
+  }
+
   const step = message.step || '分析过程'
   let stage = streamStages.value.find(item => item.step === step)
   if (!stage) {
-    stage = { step, text: '', done: false }
+    stage = { step, rawText: '', preview: null, done: false, parseError: false }
     streamStages.value.push(stage)
   }
   streamStep.value = step
-  if (typeof message.token === 'string' && message.token) stage.text += message.token
-  if (message.done) stage.done = true
+  if (messageKind === 'token' && typeof message.token === 'string' && message.token) {
+    stage.rawText += message.token
+    scheduleStagePreview(stage)
+  }
+  if (message.done) {
+    stage.done = true
+    updateStagePreview(stage)
+    stage.parseError = !stage.preview
+  }
   nextTick(() => {
     if (streamPanelRef.value) streamPanelRef.value.scrollTop = streamPanelRef.value.scrollHeight
   })
-
-  if (['completed', 'failed', 'cancelled'].includes(String(message.kind).toLowerCase())) {
-    streamTerminal = true
-    closeSSE()
-  }
 }
 
 function closeSSE() {
@@ -221,11 +237,19 @@ function closeSSE() {
   }
 }
 
-function resetStreamState() {
+function cancelPreviewFrame() {
+  if (previewFrame !== null) cancelAnimationFrame(previewFrame)
+  previewFrame = null
+  previewQueue.clear()
+}
+
+function resetStreamState(expanded) {
+  cancelPreviewFrame()
   streamStages.value = []
   streamStep.value = ''
   lastEventId = ''
   streamTerminal = false
+  analysisProcessExpanded.value = expanded
 }
 
 async function handleCancel() {
@@ -239,6 +263,7 @@ async function handleCancel() {
       stopPolling()
       closeSSE()
       cancelling.value = false
+      analysisProcessExpanded.value = false
     }
   } catch (error) {
     cancelling.value = false
@@ -260,14 +285,105 @@ function parseJson(value) {
   }
 }
 
-function formatStep(step) {
-  const normalized = String(step)
-  if (normalized.startsWith('argument_chain_map_')) return `论据链分段 ${normalized.slice('argument_chain_map_'.length)}`
-  if (normalized === 'argument_chain_reduce') return '论据链归并'
-  if (normalized === 'logic_flaws') return '逻辑漏洞检测'
-  if (normalized.startsWith('cross_validation_')) return `交叉验证 ${normalized.slice('cross_validation_'.length)}`
-  return normalized
+function stripJsonCodeFence(value) {
+  return value
+    .replace(/^\s*```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
 }
+
+function parseStreamingJson(value) {
+  const normalized = stripJsonCodeFence(value)
+  if (!normalized.trim()) return null
+  try {
+    const repaired = jsonrepair(normalized)
+    const parsed = JSON.parse(repaired)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isStagePreview(step, value) {
+  const normalized = String(step)
+  if (normalized.startsWith('argument_chain_map_')) return Array.isArray(value)
+  if (normalized === 'argument_chain_reduce') {
+    return value && !Array.isArray(value)
+      && (Array.isArray(value.argument_chain) || typeof value.main_conclusion === 'string')
+  }
+  if (normalized === 'logic_flaws') {
+    return value && !Array.isArray(value)
+      && (Array.isArray(value.flaws) || value.overall_rigor_score != null || typeof value.summary === 'string')
+  }
+  if (normalized.startsWith('cross_validation_')) {
+    return value && !Array.isArray(value)
+      && (typeof value.claim === 'string' || typeof value.verification_status === 'string')
+  }
+  return false
+}
+
+function updateStagePreview(stage) {
+  const parsed = parseStreamingJson(stage.rawText)
+  if (parsed !== null && isStagePreview(stage.step, parsed)) {
+    stage.preview = parsed
+    stage.parseError = false
+  }
+}
+
+function scheduleStagePreview(stage) {
+  previewQueue.add(stage)
+  if (previewFrame !== null) return
+  previewFrame = requestAnimationFrame(() => {
+    previewFrame = null
+    const stages = [...previewQueue]
+    previewQueue.clear()
+    stages.forEach(updateStagePreview)
+  })
+}
+
+function stageLabel(stage) {
+  const normalized = String(stage.step)
+  if (normalized.startsWith('argument_chain_map_')) {
+    return `提取文档片段 ${Number(normalized.slice('argument_chain_map_'.length)) + 1} 中的论据`
+  }
+  if (normalized === 'argument_chain_reduce') return '整理完整论据链'
+  if (normalized === 'logic_flaws') return '检查论据中的逻辑漏洞'
+  if (normalized.startsWith('cross_validation_')) {
+    const claim = stage.preview?.claim
+    return claim ? `核验论据：${claim}` : `核验第 ${Number(normalized.slice('cross_validation_'.length)) + 1} 条论据`
+  }
+  return '分析过程'
+}
+
+function stageStatus(stage) {
+  if (!stage.done) return stage.step === streamStep.value ? '进行中' : '等待中'
+  if (stage.parseError) return '结果暂不可读'
+  return '已生成'
+}
+
+function stageHasPreview(stage) {
+  if (!stage.preview) return false
+  if (Array.isArray(stage.preview)) return stage.preview.length > 0
+  return true
+}
+
+function isArgumentStage(stage) {
+  return String(stage.step).startsWith('argument_chain_')
+}
+
+function argumentStageData(stage) {
+  return String(stage.step).startsWith('argument_chain_map_')
+    ? { argument_chain: stage.preview }
+    : stage.preview
+}
+
+function isLogicStage(stage) {
+  return stage.step === 'logic_flaws'
+}
+
+function isCrossValidationStage(stage) {
+  return String(stage.step).startsWith('cross_validation_')
+}
+
 </script>
 
 <template>
@@ -344,15 +460,45 @@ function formatStep(step) {
         </button>
       </div>
 
-      <div v-if="streamStages.length" ref="streamPanelRef" data-lenis-prevent class="mb-6 space-y-3 max-h-[32rem] overflow-y-auto">
-        <div class="mb-2 text-sm font-medium text-text">分析过程</div>
-          <div v-for="stage in streamStages" :key="stage.step" class="rounded-lg border border-border bg-gray-50 p-4">
-            <div class="mb-2 flex items-center justify-between gap-3 text-xs">
-              <span class="font-medium text-text">{{ formatStep(stage.step) }}</span>
-              <span :class="stage.done ? 'text-green-600' : 'text-accent'">{{ stage.done ? '已完成' : (stage.step === streamStep ? '进行中' : '已产生') }}</span>
+      <div v-if="streamStages.length" class="mb-6 border-y border-border">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between gap-3 py-3 text-left text-sm transition-colors hover:text-primary"
+          :aria-expanded="analysisProcessExpanded"
+          aria-controls="analysis-process-panel"
+          @click="analysisProcessExpanded = !analysisProcessExpanded"
+        >
+          <span class="font-medium text-text">分析过程</span>
+          <span class="ml-auto text-xs text-text-muted">
+            {{ analysisProcessExpanded ? '收起过程' : (isActiveTask ? `${streamStages.length} 个阶段记录` : `${streamStages.length} 个阶段已完成`) }}
+          </span>
+          <ChevronDown class="h-4 w-4 shrink-0 text-text-muted transition-transform" :class="{ 'rotate-180': analysisProcessExpanded }" />
+        </button>
+
+        <div
+          v-show="analysisProcessExpanded"
+          id="analysis-process-panel"
+          ref="streamPanelRef"
+          data-lenis-prevent
+          class="max-h-[32rem] space-y-5 overflow-y-auto pb-4"
+        >
+          <div v-for="stage in streamStages" :key="stage.step" class="border-l-2 border-border pl-4">
+            <div class="mb-2 flex items-start justify-between gap-3 text-xs">
+              <span class="min-w-0 flex-1 truncate font-medium text-text" :title="stageLabel(stage)">{{ stageLabel(stage) }}</span>
+              <span class="shrink-0" :class="stage.done && !stage.parseError ? 'text-green-600' : 'text-accent'">{{ stageStatus(stage) }}</span>
             </div>
-            <div v-if="stage.text" class="whitespace-pre-wrap text-sm leading-relaxed">{{ stage.text }}</div>
+
+            <div v-if="stageHasPreview(stage)" class="space-y-3">
+              <ArgumentChain v-if="isArgumentStage(stage)" :data="argumentStageData(stage)" />
+              <LogicFlaws v-else-if="isLogicStage(stage)" :data="stage.preview" />
+              <CrossValidation v-else-if="isCrossValidationStage(stage)" :data="[stage.preview]" :mode="currentTask.mode" />
+            </div>
+            <div v-else class="flex items-center gap-2 py-2 text-xs text-text-muted">
+              <Loader2 v-if="!stage.done" class="h-3.5 w-3.5 animate-spin text-accent" />
+              <span>{{ stage.done ? '该阶段暂未生成可读卡片，最终结果仍会单独展示。' : '正在整理可读结果……' }}</span>
+            </div>
           </div>
+        </div>
       </div>
 
       <div v-else-if="isActiveTask" class="mb-6 space-y-3 tab-content-enter">

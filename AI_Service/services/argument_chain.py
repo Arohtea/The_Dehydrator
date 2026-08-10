@@ -38,11 +38,14 @@ def extract_argument_chain(chunks: list[str], text_config: AIModelConfig,
             mapped[idx] = text
             completed_count += 1
             if on_progress:
-                on_progress(10 + int((completed_count / max(total, 1)) * 50), f"论据链提取 MAP ({completed_count}/{total})")
+                on_progress(
+                    10 + int((completed_count / max(total, 1)) * 50),
+                    f"正在从文档片段提取论据（{completed_count}/{total}）",
+                )
 
     combined = "\n".join(mapped)
     if on_progress:
-        on_progress(65, "论据链提取 REDUCE")
+        on_progress(65, "正在整理完整论据链")
     llm = get_chat_model(text_config)
     text = stream_invoke(llm, REDUCE_PROMPT.format(arguments=combined), task_id, "argument_chain_reduce")
     from services import strip_markdown_json

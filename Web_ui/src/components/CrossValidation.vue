@@ -1,5 +1,5 @@
 <script setup>
-import { CheckCircle, XCircle, AlertCircle, ChevronDown } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle, ChevronDown, ExternalLink, XCircle } from 'lucide-vue-next'
 import { computed, ref, onMounted, nextTick } from 'vue'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -27,6 +27,19 @@ const statusMap = {
 const containerRef = ref(null)
 const localEvidenceLabel = computed(() => '模型知识')
 const localEvidenceFallback = computed(() => '未提供模型知识摘要')
+
+function sourceDomain(url) {
+  if (!url) return '未提供链接'
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return '来源链接'
+  }
+}
+
+function isSafeSourceUrl(url) {
+  return /^https?:\/\//i.test(String(url || ''))
+}
 
 onMounted(async () => {
   await nextTick()
@@ -63,13 +76,13 @@ const leave = (el, done) => {
 
   <div v-else class="space-y-4" ref="containerRef">
     <div v-for="(item, i) in props.data" :key="i"
-      class="bg-white border border-border rounded-lg overflow-hidden gs-cv-item opacity-0">
+      class="bg-white border border-border rounded-lg overflow-hidden gs-cv-item">
       <!-- 标题栏 -->
       <div class="px-4 py-3 flex items-center gap-2 cursor-pointer hover:bg-gray-50" @click="toggle(i)">
         <component :is="item.verification_status === 'contradicted' ? XCircle : item.verification_status === 'supported' ? CheckCircle : AlertCircle"
           class="w-4 h-4 shrink-0"
           :class="(statusMap[item.verification_status] || statusMap.unverifiable).cls.split(' ')[0]" />
-        <p class="font-medium text-sm flex-1 min-w-0">{{ item.claim || `观点 ${i + 1}` }}</p>
+        <p class="font-medium text-sm flex-1 min-w-0">{{ item.claim || '待核验论据' }}</p>
         <span v-if="item.confidence != null" class="text-xs text-text-muted shrink-0">{{ Math.round(item.confidence * 100) }}%</span>
         <span v-if="item.verification_status"
           class="text-xs px-2 py-0.5 rounded-full shrink-0"
@@ -93,9 +106,28 @@ const leave = (el, done) => {
             <div class="p-4">
               <div class="flex items-center gap-1.5 mb-2">
                 <AlertCircle class="w-4 h-4 text-blue-500" />
-                <span class="text-xs font-medium text-blue-700">联网证据</span>
+                <span class="text-xs font-medium text-blue-700">联网检索结果</span>
               </div>
-              <p class="text-sm text-text-muted leading-relaxed">{{ item.web_evidence_summary || '无' }}</p>
+              <p class="text-sm text-text-muted leading-relaxed">
+                {{ item.web_evidence_summary || (mode === 'quick' ? '快速分析未执行联网验证' : '未找到可展示的联网来源') }}
+              </p>
+              <div v-if="item.web_sources?.length" class="mt-3 space-y-3">
+                <div v-for="(source, j) in item.web_sources" :key="source.url || `${source.title}-${j}`" class="border-t border-border pt-3">
+                  <a
+                    v-if="isSafeSourceUrl(source.url)"
+                    :href="source.url"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    class="flex items-start gap-1.5 text-sm font-medium text-primary hover:text-primary-light"
+                  >
+                    <span class="min-w-0 break-words">{{ source.title || '未命名网页' }}</span>
+                    <ExternalLink class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  </a>
+                  <p v-else class="text-sm font-medium text-text">{{ source.title || '未命名网页' }}</p>
+                  <p class="mt-1 text-xs text-text-muted">{{ sourceDomain(source.url) }}</p>
+                  <p v-if="source.snippet" class="mt-1 text-xs leading-relaxed text-text-muted">{{ source.snippet }}</p>
+                </div>
+              </div>
             </div>
           </div>
 
