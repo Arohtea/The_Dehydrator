@@ -31,7 +31,12 @@ CROSS_VALIDATION_PROMPT = """你是一位学术事实核查专家。请对以下
 2. 矛盾点：是否存在与该论据相反的证据
 3. 补充信息：是否有重要的补充或修正
 
-以JSON格式输出：
+请严格使用以下输出协议：
+1. 先输出 `<public_reasoning>` 和 `</public_reasoning>` 标签，在标签内用简短文字说明你依据了哪些来源和核验维度。只说明面向用户的分析依据，不要复述全文，不要输出最终 JSON，不要暴露隐藏思维链，最多 4000 个字符。
+2. 紧接着输出 `<result>` 和 `</result>` 标签，标签内只放最终 JSON。
+3. 除上述两个标签及其内容外不要输出其他文字。
+
+`<result>` 内的 JSON 格式如下：
 {{
   "claim": "原始论据",
   "verification_status": "supported/partially_supported/contradicted/unverifiable",
@@ -44,4 +49,4 @@ CROSS_VALIDATION_PROMPT = """你是一位学术事实核查专家。请对以下
   "conclusion": "综合验证结论"
 }}
 
-只输出JSON，不要其他内容。"""
+"""

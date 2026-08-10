@@ -18,6 +18,8 @@ const polling = ref(false)
 const cancelling = ref(false)
 const streamStages = ref([])
 const streamStep = ref('')
+const thinkingEntries = ref([])
+const thinkingStep = ref('')
 const analysisProcessExpanded = ref(true)
 let timer = null
 let reconnectTimer = null
@@ -64,6 +66,10 @@ watch(activeTab, async () => {
       )
     }
   }
+})
+
+watch(() => currentTask.value?.status, status => {
+  if (status !== 'COMPLETED') activeTab.value = 0
 })
 
 watch(currentTask, async (newVal, oldVal) => {
@@ -140,6 +146,7 @@ async function pollCurrentTask() {
       stopPolling()
       closeSSE()
       cancelling.value = false
+      finishThinkingEntries(task.status !== 'COMPLETED')
       analysisProcessExpanded.value = false
     }
   } catch {
@@ -197,10 +204,16 @@ function handleStreamMessage(message) {
     return
   }
 
+  if (message.kind === 'thinking') {
+    recordThinking(message)
+    return
+  }
+
   const messageKind = String(message.kind || '').toLowerCase()
   if (['completed', 'failed', 'cancelled'].includes(messageKind)) {
     streamTerminal = true
     markProcessStagesDone()
+    finishThinkingEntries(messageKind !== 'completed')
     analysisProcessExpanded.value = false
     closeSSE()
   }
@@ -216,6 +229,8 @@ function closeSSE() {
 function resetStreamState(expanded) {
   streamStages.value = []
   streamStep.value = ''
+  thinkingEntries.value = []
+  thinkingStep.value = ''
   lastEventId = ''
   streamTerminal = false
   analysisProcessExpanded.value = expanded
@@ -232,6 +247,7 @@ async function handleCancel() {
       stopPolling()
       closeSSE()
       cancelling.value = false
+      finishThinkingEntries(data.status !== 'COMPLETED')
       analysisProcessExpanded.value = false
     }
   } catch (error) {
@@ -284,6 +300,56 @@ function recordProcessStage(message) {
 
 function markProcessStagesDone() {
   streamStages.value.forEach(stage => { stage.done = true })
+}
+
+function recordThinking(message) {
+  const step = String(message.step || 'analysis')
+  let entry = thinkingEntries.value.find(item => item.step === step)
+  if (!entry) {
+    entry = { step, text: '', done: false, interrupted: false }
+    thinkingEntries.value.push(entry)
+  }
+  if (typeof message.text === 'string' && message.text) entry.text += message.text
+  if (message.done) {
+    entry.done = true
+    entry.interrupted = false
+  }
+  thinkingStep.value = step
+  nextTick(() => {
+    if (containerRef.value && analysisProcessExpanded.value) {
+      const panel = containerRef.value.querySelector('#analysis-process-panel')
+      if (panel) panel.scrollTop = panel.scrollHeight
+    }
+  })
+}
+
+function finishThinkingEntries(interrupted) {
+  thinkingEntries.value.forEach(entry => {
+    if (!entry.done) {
+      entry.done = true
+      entry.interrupted = interrupted
+    }
+  })
+}
+
+function thinkingLabel(step) {
+  const normalized = String(step)
+  if (normalized.startsWith('argument_chain_map_')) {
+    const index = Number(normalized.slice('argument_chain_map_'.length))
+    return Number.isFinite(index) ? `提取第 ${index + 1} 个文档片段的论据` : '提取文档片段中的论据'
+  }
+  if (normalized === 'argument_chain_reduce') return '整理完整论据链'
+  if (normalized === 'logic_flaws') return '检查论据中的逻辑漏洞'
+  if (normalized.startsWith('cross_validation_')) {
+    const index = Number(normalized.slice('cross_validation_'.length))
+    return Number.isFinite(index) ? `交叉验证第 ${index + 1} 条论据` : '交叉验证论据'
+  }
+  return '分析依据'
+}
+
+function thinkingStatus(entry) {
+  if (entry.done) return entry.interrupted ? '已结束' : '已完成'
+  return entry.step === thinkingStep.value ? '进行中' : '等待中'
 }
 
 function stageStatus(stage) {
@@ -356,7 +422,7 @@ function stageStatus(stage) {
         <span v-else>未使用参考资料</span>
       </div>
 
-      <div class="flex gap-1 border-b border-border mb-6 gs-task-reveal">
+      <div v-if="currentTask.status === 'COMPLETED'" class="flex gap-1 border-b border-border mb-6 gs-task-reveal">
         <button
           v-for="(tab, i) in tabs" :key="tab"
           class="px-4 py-2 text-sm transition-colors duration-200 cursor-pointer"
@@ -367,7 +433,7 @@ function stageStatus(stage) {
         </button>
       </div>
 
-      <div v-if="streamStages.length" class="mb-6 border-y border-border">
+      <div v-if="streamStages.length || thinkingEntries.length" class="mb-6 border-y border-border">
         <button
           type="button"
           class="flex w-full items-center justify-between gap-3 py-3 text-left text-sm transition-colors hover:text-primary"
@@ -395,6 +461,17 @@ function stageStatus(stage) {
             </div>
             <div class="mt-2 h-1 overflow-hidden rounded-full bg-gray-100">
               <div class="h-full rounded-full bg-accent transition-all duration-500" :style="{ width: `${stage.progress}%` }" />
+            </div>
+          </div>
+
+          <div v-if="thinkingEntries.length" class="border-t border-border pt-4">
+            <div class="mb-3 text-xs font-medium text-text">公开分析依据</div>
+            <div v-for="entry in thinkingEntries" :key="entry.step" class="mb-4 last:mb-0 border-l-2 border-accent/40 pl-4">
+              <div class="mb-2 flex items-start justify-between gap-3 text-xs">
+                <span class="min-w-0 flex-1 font-medium text-text">{{ thinkingLabel(entry.step) }}</span>
+                <span class="shrink-0" :class="entry.done && !entry.interrupted ? 'text-green-600' : 'text-accent'">{{ thinkingStatus(entry) }}</span>
+              </div>
+              <p class="whitespace-pre-wrap break-words text-sm leading-6 text-text-muted">{{ entry.text || '正在整理分析依据...' }}</p>
             </div>
           </div>
         </div>
