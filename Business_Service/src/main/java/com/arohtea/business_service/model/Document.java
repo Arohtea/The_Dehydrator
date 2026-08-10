@@ -20,6 +20,10 @@ public class Document {
     @Column(columnDefinition = "TEXT")
     private String aiDocId;
 
+    /** 删除流程等待分析服务确认期间，禁止再次启动分析。 */
+    @Column(nullable = false)
+    private boolean deleting = false;
+
     private LocalDateTime createdAt;
 
     @PrePersist

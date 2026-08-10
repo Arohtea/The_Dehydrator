@@ -16,6 +16,8 @@ GEMINI.md
 AGENTS.md
 .agent/
 .gemini/
+docs/
+tmp/
 
 
 # Web_ui

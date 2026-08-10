@@ -14,6 +14,7 @@ def get_client() -> QdrantClient:
         _client = QdrantClient(
             host=settings.qdrant_host,
             port=settings.qdrant_http_port,
+            https=False,
             api_key=settings.qdrant_api_key,
         )
     return _client
