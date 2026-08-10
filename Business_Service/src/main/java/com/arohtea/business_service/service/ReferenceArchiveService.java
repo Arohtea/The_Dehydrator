@@ -63,6 +63,12 @@ public class ReferenceArchiveService {
                 });
     }
 
+    /**
+     * 使用上传时的设置快照完成分析文档镜像归档，避免异步期间配置漂移。
+     *
+     * @param sourceDocument 已完成向量化的原始文档
+     * @param settings 上传时读取的数据库设置快照
+     */
     public void finalizeAnalysisMirror(Document sourceDocument, SystemSettings settings) {
         if (sourceDocument.getAiDocId() == null || sourceDocument.getAiDocId().isBlank()) {
             return;
@@ -87,8 +93,7 @@ public class ReferenceArchiveService {
                 sourceDocument.getFilename(),
                 folderCandidates,
                 categoryCandidates,
-                settings.getApiKey(),
-                settings.getModel()
+                settings.getTextModelConfig()
         );
 
         ReferenceDocument currentMirror = referenceDocumentRepository.findById(mirror.getId()).orElse(null);

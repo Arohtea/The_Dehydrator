@@ -6,6 +6,7 @@ import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -19,10 +20,21 @@ public class StreamController {
 
     private final RedisMessageListenerContainer listenerContainer;
 
+    @Value("${analysis.redis.stream-prefix}")
+    private String streamPrefix;
+    @Value("${analysis.sse-timeout-ms}")
+    private long sseTimeoutMs;
+
+    /**
+     * 订阅指定任务的 Redis 流并转发为 SSE。
+     *
+     * @param taskId 分析任务 ID
+     * @return 使用部署超时配置的 SSE 连接
+     */
     @GetMapping(value = "/stream/{taskId}", produces = "text/event-stream")
     public SseEmitter stream(@PathVariable("taskId") String taskId) {
-        SseEmitter emitter = new SseEmitter(600_000L);
-        ChannelTopic topic = new ChannelTopic("analysis:stream:" + taskId);
+        SseEmitter emitter = new SseEmitter(sseTimeoutMs);
+        ChannelTopic topic = new ChannelTopic(streamPrefix + taskId);
 
         MessageListener listener = (Message message, byte[] pattern) -> {
             try {

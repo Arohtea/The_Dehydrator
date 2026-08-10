@@ -75,6 +75,8 @@ async function confirmStartAnalysis() {
     }
     analysisDialogVisible.value = false
     router.push(`/documents/${analysisTargetDoc.value.id}`)
+  } catch (error) {
+    alert(error?.response?.data?.error || '启动分析失败')
   } finally {
     startingAnalysis.value = false
   }

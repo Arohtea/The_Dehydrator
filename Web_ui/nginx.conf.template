@@ -1,10 +1,10 @@
 server {
-    listen 80;
+    listen ${WEB_CONTAINER_PORT};
     root /usr/share/nginx/html;
     index index.html;
 
     location /api/ {
-        proxy_pass http://business-service:8080;
+        proxy_pass ${WEB_NGINX_API_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }

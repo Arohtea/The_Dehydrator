@@ -49,7 +49,7 @@ async function handleUpload(file) {
     await store.upload(file, (p) => { progress.value = p })
     router.push('/documents')
   } catch (e) {
-    error.value = '上传失败，请重试'
+    error.value = e?.response?.data?.error || '上传失败，请重试'
   } finally {
     uploading.value = false
   }

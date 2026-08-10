@@ -38,4 +38,16 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(Map.of("error", "文件或请求体超过上传限制"));
     }
+
+    /**
+     * 将业务配置错误统一映射为 422，避免上传接口返回无上下文的 500。
+     *
+     * @param exception 配置或业务参数异常
+     * @return 面向用户的错误消息
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException exception) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("error", exception.getMessage() == null ? "请求参数无效" : exception.getMessage()));
+    }
 }

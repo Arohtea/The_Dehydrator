@@ -1,18 +1,9 @@
-from langchain_community.chat_models import ChatZhipuAI
-
-from config.settings import settings
 from prompts.reference_classification import REFERENCE_CLASSIFICATION_PROMPT
 from services import strip_markdown_json
+from services.llm import get_chat_model
+from services.model_config import AIModelConfig
 from services.vector_store import clone_analysis_document_to_reference
 from services.output_models import ReferenceClassificationResult, parse_and_validate
-
-
-def _get_llm(api_key: str | None = None, model: str | None = None):
-    return ChatZhipuAI(
-        model=model or settings.zhipuai_model,
-        api_key=api_key or settings.zhipuai_api_key,
-        temperature=0.1,
-    )
 
 
 def _preview_text(chunks: list[str], max_chunks: int = 6, max_chars: int = 5000) -> str:
@@ -26,8 +17,8 @@ def _format_candidates(items: list[str]) -> str:
 
 def _suggest_folder_and_category(filename: str, document_preview: str,
                                  folder_candidates: list[str], category_candidates: list[str],
-                                 api_key: str | None = None, model: str | None = None) -> dict:
-    llm = _get_llm(api_key, model)
+                                 text_config: AIModelConfig) -> dict:
+    llm = get_chat_model(text_config, streaming=False)
     response = llm.invoke(REFERENCE_CLASSIFICATION_PROMPT.format(
         filename=filename,
         document_preview=document_preview,
@@ -50,7 +41,20 @@ def _suggest_folder_and_category(filename: str, document_preview: str,
 
 def archive_reference_document(doc_id: str, library_id: str, filename: str,
                                folder_candidates: list[str], category_candidates: list[str],
-                               api_key: str | None = None, model: str | None = None) -> dict:
+                               text_config: AIModelConfig) -> dict:
+    """克隆分析文档向量，并使用显式文本模型配置给出归档建议。
+
+    Args:
+        doc_id: 待归档的分析文档 ID。
+        library_id: 目标参考资料集 ID。
+        filename: 文档文件名。
+        folder_candidates: 可选文件夹名称。
+        category_candidates: 可选分类名称。
+        text_config: 本次分类使用的文本模型配置。
+
+    Returns:
+        新参考文档 ID、分类建议和置信度。
+    """
     cloned_doc_id, texts = clone_analysis_document_to_reference(doc_id, library_id)
     try:
         suggestion = _suggest_folder_and_category(
@@ -58,8 +62,7 @@ def archive_reference_document(doc_id: str, library_id: str, filename: str,
             _preview_text(texts),
             folder_candidates,
             category_candidates,
-            api_key,
-            model,
+            text_config,
         )
     except Exception:
         suggestion = {

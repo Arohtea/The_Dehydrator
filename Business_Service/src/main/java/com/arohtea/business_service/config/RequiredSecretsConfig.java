@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 在服务启动阶段拒绝空凭据，避免部署后静默回退到弱认证配置。
+ * 在服务启动阶段拒绝关键凭据为空，避免部署后静默回退到弱认证配置。
  */
 @Configuration
 public class RequiredSecretsConfig {
@@ -25,17 +25,19 @@ public class RequiredSecretsConfig {
      * @param minioAccessKey MinIO Access Key
      * @param minioSecretKey MinIO Secret Key
      * @param internalServiceToken 内部服务令牌
+     * @param adminUsername 管理员用户名
      * @param adminPasswordHash 管理员 BCrypt 密码哈希
      */
     public RequiredSecretsConfig(
-            @Value("${POSTGRES_PASSWORD:}") String postgresPassword,
-            @Value("${REDIS_PASSWORD:}") String redisPassword,
-            @Value("${RABBITMQ_USER:}") String rabbitmqUser,
-            @Value("${RABBITMQ_PASSWORD:}") String rabbitmqPassword,
-            @Value("${MINIO_ACCESS_KEY:}") String minioAccessKey,
-            @Value("${MINIO_SECRET_KEY:}") String minioSecretKey,
-            @Value("${INTERNAL_SERVICE_TOKEN:}") String internalServiceToken,
-            @Value("${ADMIN_PASSWORD_HASH:}") String adminPasswordHash) {
+            @Value("${spring.datasource.password:}") String postgresPassword,
+            @Value("${spring.data.redis.password:}") String redisPassword,
+            @Value("${spring.rabbitmq.username:}") String rabbitmqUser,
+            @Value("${spring.rabbitmq.password:}") String rabbitmqPassword,
+            @Value("${minio.access-key:}") String minioAccessKey,
+            @Value("${minio.secret-key:}") String minioSecretKey,
+            @Value("${ai-service.service-token:}") String internalServiceToken,
+            @Value("${security.admin.username:}") String adminUsername,
+            @Value("${security.admin.password-hash:}") String adminPasswordHash) {
         this.secrets = new LinkedHashMap<>();
         secrets.put("POSTGRES_PASSWORD", postgresPassword);
         secrets.put("REDIS_PASSWORD", redisPassword);
@@ -44,13 +46,14 @@ public class RequiredSecretsConfig {
         secrets.put("MINIO_ACCESS_KEY", minioAccessKey);
         secrets.put("MINIO_SECRET_KEY", minioSecretKey);
         secrets.put("INTERNAL_SERVICE_TOKEN", internalServiceToken);
-        secrets.put("ADMIN_PASSWORD_HASH", adminPasswordHash);
+        secrets.put("ADMIN_USERNAME", adminUsername);
+        secrets.put("ADMIN_PASSWORD_HASH", stripOptionalQuotes(adminPasswordHash));
     }
 
     @PostConstruct
     void validateSecrets() {
         String missing = secrets.entrySet().stream()
-                .filter(entry -> entry.getValue() == null || entry.getValue().isBlank())
+                .filter(entry -> isMissing(entry.getValue()))
                 .map(Map.Entry::getKey)
                 .reduce((left, right) -> left + ", " + right)
                 .orElse("");
@@ -61,5 +64,24 @@ public class RequiredSecretsConfig {
         if (!passwordHash.matches("^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$")) {
             throw new IllegalStateException("ADMIN_PASSWORD_HASH 必须是有效的 BCrypt 哈希");
         }
+    }
+
+    private boolean isMissing(String value) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        String normalized = value.trim().toLowerCase();
+        return normalized.startsWith("replace-with-") || normalized.startsWith("change-me");
+    }
+
+    private String stripOptionalQuotes(String value) {
+        if (value == null || value.length() < 2) {
+            return value;
+        }
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        return (first == last && (first == '\'' || first == '"'))
+                ? value.substring(1, value.length() - 1)
+                : value;
     }
 }

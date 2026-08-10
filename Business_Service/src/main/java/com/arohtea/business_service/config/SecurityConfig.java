@@ -44,10 +44,21 @@ public class SecurityConfig {
      * @param adminPasswordHash 管理员 BCrypt 密码哈希
      */
     public SecurityConfig(
-            @Value("${security.admin.username:admin}") String adminUsername,
-            @Value("${security.admin.password-hash:}") String adminPasswordHash) {
+            @Value("${security.admin.username}") String adminUsername,
+            @Value("${security.admin.password-hash}") String adminPasswordHash) {
         this.adminUsername = adminUsername;
-        this.adminPasswordHash = adminPasswordHash;
+        this.adminPasswordHash = stripOptionalQuotes(adminPasswordHash);
+    }
+
+    private String stripOptionalQuotes(String value) {
+        if (value == null || value.length() < 2) {
+            return value;
+        }
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        return (first == last && (first == '\'' || first == '"'))
+                ? value.substring(1, value.length() - 1)
+                : value;
     }
 
     /**

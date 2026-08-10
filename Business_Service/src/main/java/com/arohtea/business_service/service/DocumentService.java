@@ -34,7 +34,17 @@ public class DocumentService {
     @Value("${minio.bucket}")
     private String bucket;
 
+    /**
+     * 校验数据库模型配置后保存文档，并异步完成向量化与自动归档。
+     *
+     * @param file 上传文件
+     * @return 已保存的业务文档
+     * @throws Exception 文件存储或读取失败
+     */
     public Document upload(MultipartFile file) throws Exception {
+        var settings = settingsService.get();
+        var vectorModel = settingsService.requireVectorModelConfig(settings);
+        settingsService.requireTextModelConfig(settings);
         ensureBucket();
 
         String path = UUID.randomUUID() + "/" + file.getOriginalFilename();
@@ -55,13 +65,12 @@ public class DocumentService {
         referenceArchiveService.createAnalysisMirror(saved);
 
         String docId = saved.getId();
-        var settings = settingsService.get();
         CompletableFuture.runAsync(() -> {
             String aiDocId = null;
             try {
                 aiDocId = aiServiceClient.uploadDocument(
                         fileBytes, file.getOriginalFilename(),
-                        settings.getApiKey(), settings.getChunkSize(), settings.getChunkOverlap());
+                        vectorModel, settings.getChunkSize(), settings.getChunkOverlap());
                 Document current = documentRepository.findById(docId).orElse(null);
                 if (current == null) {
                     aiServiceClient.deleteDocument(aiDocId);

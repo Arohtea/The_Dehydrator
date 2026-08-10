@@ -23,7 +23,7 @@ public class AnalysisResultListener {
     private final AnalysisTaskRepository taskRepository;
     private final ObjectMapper objectMapper;
 
-    @RabbitListener(queues = "analysis.result")
+    @RabbitListener(queues = "${messaging.analysis.result-queue}")
     @Transactional
     public void onResult(String message) {
         try {
@@ -89,7 +89,7 @@ public class AnalysisResultListener {
         }
     }
 
-    @RabbitListener(queues = "analysis.progress")
+    @RabbitListener(queues = "${messaging.analysis.progress-queue}")
     @Transactional
     public void onProgress(String message) {
         try {

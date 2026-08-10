@@ -7,10 +7,12 @@ from slowapi.middleware import SlowAPIMiddleware
 from api.routes import document, analysis
 from api.auth import require_service_token
 from api.limiter import limiter
+from config.settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app):
+    """在应用生命周期内启动 RabbitMQ 消费者。"""
     from services.mq_consumer import start_consumer
     try:
         await start_consumer()
@@ -40,9 +42,15 @@ app.include_router(
 
 @app.get("/health")
 async def health():
+    """返回 AI Service 进程存活状态。"""
     return {"status": "ok"}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(
+        "main:app",
+        host=settings.ai_service_host,
+        port=settings.ai_service_port,
+        reload=False,
+    )

@@ -1,52 +1,47 @@
 # 安全部署配置
 
-Business Service 和 AI Service 启动前必须通过部署平台 Secret 或进程环境变量提供以下值，仓库内不保存真实凭据。
+## 单一配置源
 
-## Business Service
+所有部署配置只保存在未跟踪的 `docker/.env`。可提交的 `docker/.env.example` 只定义键名和占位符，不包含真实账户、密码、Token、哈希或服务地址。
 
-必需变量：
+真实文件至少应满足：
 
-- `POSTGRES_PASSWORD`
-- `REDIS_PASSWORD`
-- `RABBITMQ_USER`
-- `RABBITMQ_PASSWORD`
-- `MINIO_ACCESS_KEY`
-- `MINIO_SECRET_KEY`
-- `INTERNAL_SERVICE_TOKEN`
-- `ADMIN_PASSWORD_HASH`
+- 权限为 `600`
+- 不存在空值、`replace-with-` 或 `change-me` 占位符
+- PostgreSQL、RabbitMQ、MinIO 沿用既有账户时，与现有数据卷中的账户一致
+- Redis 密码、Qdrant API Key、`INTERNAL_SERVICE_TOKEN` 分别生成且不复用
+- `HOST_BIND_ADDRESS` 不向不可信网络暴露基础设施
 
-可选变量：
+Business Service、AI Service、Vite、Nginx 和 Compose 都消费这份配置。`INTERNAL_SERVICE_TOKEN` 只有一个配置键，因此内部 HTTP 调用不会维护第二份 Token。
 
-- `ADMIN_USERNAME`，默认 `admin`
-- `COOKIE_SECURE`，HTTPS 生产环境必须设为 `true`
-- `ALLOWED_MODELS`，逗号分隔的模型白名单，默认 `glm-5,glm-4.6`
+## 管理员账户
 
-`ADMIN_PASSWORD_HASH` 必须是 BCrypt 哈希。可使用 Apache `htpasswd` 交互式生成，避免明文密码进入命令历史：
+`ADMIN_USERNAME` 与 `ADMIN_PASSWORD_HASH` 都是必填项，不提供默认账户。`ADMIN_PASSWORD_HASH` 必须是 BCrypt，真实 `.env` 不保存明文密码。
+
+使用交互式命令生成哈希，避免明文进入命令历史：
 
 ```bash
-htpasswd -nBC 12 admin
+htpasswd -nBC 12 <管理员用户名>
 ```
 
-将输出中用户名后面的 `$2y$...` 哈希作为 Secret 保存。
+将输出中冒号后的 BCrypt 值写入 `ADMIN_PASSWORD_HASH`。启动校验会拒绝空值、占位符和无效 BCrypt。
 
-## AI Service
+## AI 配置边界
 
-必需变量：
+以下内容只能保存在 PostgreSQL 的 `system_settings` 表：
 
-- `ZHIPUAI_API_KEY`
-- `INTERNAL_SERVICE_TOKEN`，必须与 Business Service 使用同一值
-- `QDRANT_API_KEY`
-- `MINIO_ACCESS_KEY`
-- `MINIO_SECRET_KEY`
-- `REDIS_PASSWORD`
-- `RABBITMQ_USER`
-- `RABBITMQ_PASSWORD`
+- 文本模型名称、OpenAI 兼容接口 URL、API Key
+- 向量模型名称、OpenAI 兼容接口 URL、API Key
+- Tavily API Key
+- `mapWorkers`、`chunkSize`、`chunkOverlap`
 
-缺少上述任一值，或直接使用 `replace-with-` 示例值时，AI Service 会拒绝启动。
+AI Service 不读取模型环境变量，也不维护模型回退值。模型三项可以整组为空，但不能只填写一部分；缺少调用所需配置时，Business Service 在上传、归档或分析前返回 `422`。
 
-## 网络边界
+## 网络与数据
 
-- 只通过 Web UI 暴露 Business Service 的 `/api`。
-- AI Service、Redis、RabbitMQ、MinIO 和 Qdrant 不对公网发布。
-- 仓库中的基础设施 Compose 仅绑定 `127.0.0.1`，远程部署应改用私有网络或 TLS 入口。
-- 凭据轮换后必须同时更新所有服务 Secret，并重启依赖这些凭据的进程。
+- 基础设施端口统一按 `HOST_BIND_ADDRESS` 绑定。
+- Redis 要求密码认证，Qdrant 要求 API Key。
+- 应用管理员认证使用 HTTP Session 和 CSRF，不启用默认账户或 HTTP Basic。
+- PostgreSQL、RabbitMQ、MinIO、Qdrant 和 Redis 使用 `.env` 指定的外部卷。
+- 重建容器时不得使用 `down -v`；数据库结构变更前必须生成并校验备份。
+- 生产环境启用 HTTPS 时，`COOKIE_SECURE` 必须设为 `true`。

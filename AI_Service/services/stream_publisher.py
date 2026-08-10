@@ -3,7 +3,6 @@ import redis
 from config.settings import settings
 
 _redis = None
-CANCEL_CHECK_INTERVAL = 10
 
 
 def _get_redis():
@@ -23,17 +22,17 @@ class AnalysisCancelled(Exception):
 
 
 def is_cancelled(task_id: str) -> bool:
-    return _get_redis().exists(f"analysis:cancel:{task_id}") == 1
+    return _get_redis().exists(f"{settings.redis_cancel_prefix}{task_id}") == 1
 
 
 def publish_token(task_id: str, step: str, token: str):
-    _get_redis().publish(f"analysis:stream:{task_id}", json.dumps({
+    _get_redis().publish(f"{settings.redis_stream_prefix}{task_id}", json.dumps({
         "step": step, "token": token,
     }))
 
 
 def publish_step_done(task_id: str, step: str):
-    _get_redis().publish(f"analysis:stream:{task_id}", json.dumps({
+    _get_redis().publish(f"{settings.redis_stream_prefix}{task_id}", json.dumps({
         "step": step, "done": True,
     }))
 
@@ -47,7 +46,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
     for chunk in llm.stream(prompt):
         chunk_count += 1
         # 节流取消检查，避免每个 token 都访问一次 Redis。
-        if chunk_count % CANCEL_CHECK_INTERVAL == 0 and is_cancelled(task_id):
+        if chunk_count % settings.ai_cancel_check_interval_tokens == 0 and is_cancelled(task_id):
             raise AnalysisCancelled(task_id)
         if chunk.content:
             parts.append(chunk.content)

@@ -1,50 +1,76 @@
 server:
-  port: 8080
+  address: ${BUSINESS_SERVICE_HOST}
+  port: ${BUSINESS_SERVICE_PORT}
   servlet:
     session:
       cookie:
         http-only: true
-        secure: ${COOKIE_SECURE:false}
+        secure: ${COOKIE_SECURE}
         same-site: strict
 
 spring:
+  config:
+    import: file:../docker/.env[.properties]
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/dehydrator}
-    username: ${POSTGRES_USER:postgres}
+    url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+    username: ${POSTGRES_USER}
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: false
+      ddl-auto: ${JPA_DDL_AUTO}
+    show-sql: ${JPA_SHOW_SQL}
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
       password: ${REDIS_PASSWORD}
   rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT}
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASSWORD}
 
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 25MB
+      max-file-size: ${BUSINESS_MAX_FILE_SIZE}
+      max-request-size: ${BUSINESS_MAX_REQUEST_SIZE}
 
 minio:
-  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  endpoint: http://${MINIO_HOST}:${MINIO_API_PORT}
   access-key: ${MINIO_ACCESS_KEY}
   secret-key: ${MINIO_SECRET_KEY}
-  bucket: ${MINIO_BUCKET:dehydrator}
+  bucket: ${MINIO_BUCKET}
 
 ai-service:
-  url: ${AI_SERVICE_URL:http://localhost:8000}
+  url: http://${AI_SERVICE_HOST}:${AI_SERVICE_PORT}
   service-token: ${INTERNAL_SERVICE_TOKEN}
 
 security:
   admin:
-    username: ${ADMIN_USERNAME:admin}
+    username: ${ADMIN_USERNAME}
     password-hash: ${ADMIN_PASSWORD_HASH}
-  allowed-models: ${ALLOWED_MODELS:glm-5,glm-4.6}
+
+http-client:
+  connect-timeout-ms: ${BUSINESS_HTTP_CONNECT_TIMEOUT_MS}
+  read-timeout-ms: ${BUSINESS_HTTP_READ_TIMEOUT_MS}
+
+messaging:
+  analysis:
+    exchange: ${RABBITMQ_ANALYSIS_EXCHANGE}
+    request-queue: ${RABBITMQ_REQUEST_QUEUE}
+    result-queue: ${RABBITMQ_RESULT_QUEUE}
+    progress-queue: ${RABBITMQ_PROGRESS_QUEUE}
+
+analysis:
+  redis:
+    stream-prefix: ${REDIS_STREAM_PREFIX}
+    cancel-prefix: ${REDIS_CANCEL_PREFIX}
+  upload-rate-capacity: ${BUSINESS_UPLOAD_RATE_CAPACITY}
+  start-rate-capacity: ${BUSINESS_ANALYSIS_RATE_CAPACITY}
+  rate-window-seconds: ${BUSINESS_RATE_WINDOW_SECONDS}
+  max-concurrent-tasks: ${BUSINESS_MAX_CONCURRENT_ANALYSIS_TASKS}
+  task-timeout-minutes: ${BUSINESS_TASK_TIMEOUT_MINUTES}
+  task-cleanup-interval-ms: ${BUSINESS_TASK_CLEANUP_INTERVAL_MS}
+  cancel-ttl-minutes: ${BUSINESS_CANCEL_TTL_MINUTES}
+  sse-timeout-ms: ${BUSINESS_SSE_TIMEOUT_MS}

@@ -147,12 +147,22 @@ public class ReferenceLibraryService {
         return referenceDocumentRepository.save(document);
     }
 
+    /**
+     * 校验数据库向量配置后保存参考资料，并异步完成向量化。
+     *
+     * @param libraryId 目标参考资料集 ID
+     * @param file 上传文件
+     * @return 已保存的参考资料
+     * @throws Exception 文件存储或读取失败
+     */
     public ReferenceDocument uploadDocument(String libraryId, MultipartFile file) throws Exception {
         ReferenceLibrary library = getLibrary(libraryId);
         if (library == null) {
             throw new IllegalArgumentException("资料集不存在");
         }
 
+        var settings = settingsService.get();
+        var vectorModel = settingsService.requireVectorModelConfig(settings);
         ensureBucket();
 
         String path = "reference/" + libraryId + "/" + UUID.randomUUID() + "/" + file.getOriginalFilename();
@@ -174,14 +184,13 @@ public class ReferenceLibraryService {
         ReferenceDocument saved = referenceDocumentRepository.save(document);
 
         String documentId = saved.getId();
-        var settings = settingsService.get();
         CompletableFuture.runAsync(() -> {
             String aiDocId = null;
             try {
                 aiDocId = aiServiceClient.uploadDocument(
                         fileBytes,
                         file.getOriginalFilename(),
-                        settings.getApiKey(),
+                        vectorModel,
                         settings.getChunkSize(),
                         settings.getChunkOverlap(),
                         "reference_document",
