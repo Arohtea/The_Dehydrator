@@ -2,8 +2,10 @@ import json
 import logging
 import time
 
+import httpx
 import redis
 from config.settings import settings
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 _redis = None
 log = logging.getLogger(__name__)
@@ -13,6 +15,7 @@ PUBLIC_REASONING_CLOSE_TAG = "</public_reasoning>"
 RESULT_OPEN_TAG = "<result>"
 RESULT_CLOSE_TAG = "</result>"
 MAX_PUBLIC_REASONING_CHARS = 4_000
+STREAM_MAX_ATTEMPTS = 3
 
 
 def _get_redis():
@@ -54,13 +57,17 @@ def _publish_event(task_id: str, event: dict):
         log.warning("分析事件流写入失败，继续执行分析: %s", task_id)
 
 
-def _publish_thinking(task_id: str, step: str, text: str = "", done: bool = False):
-    _publish_event(task_id, {
+def _publish_thinking(task_id: str, step: str, text: str = "", done: bool = False,
+                     reset: bool = False):
+    event = {
         "kind": "thinking",
         "step": step,
         "text": text,
         "done": done,
-    })
+    }
+    if reset:
+        event["reset"] = True
+    _publish_event(task_id, event)
 
 
 class _PublicReasoningParser:
@@ -145,8 +152,23 @@ class _PublicReasoningParser:
         return raw_text
 
 
+def _is_retryable_stream_error(error: BaseException) -> bool:
+    """只对流式响应传输层中断重试，避免掩盖模型或业务错误。"""
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, httpx.TransportError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
     """流式调用 LLM，发布公开分析依据并返回最终 JSON 内容。
+
+    流式响应建立后仍可能在读取过程中被上游关闭；这类传输层异常会
+    重新发起完整请求，避免将一次网络抖动升级为整条分析任务失败。
 
     Args:
         llm: 支持 stream 调用的聊天模型。
@@ -157,60 +179,92 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
     Returns:
         协议模式下为 ``<result>`` 标签内的内容，旧格式下为模型完整输出。
     """
-    if is_cancelled(task_id):
-        raise AnalysisCancelled(task_id)
+    attempt_state = {"thinking_emitted": False}
 
-    raw_parts = []
-    chunk_count = 0
-    parser = _PublicReasoningParser()
-    thinking_buffer = []
-    buffered_chars = 0
-    reasoning_chars = 0
-    thinking_done = False
-    last_flush_at = time.monotonic()
+    def invoke_once():
+        attempt_state["thinking_emitted"] = False
+        if is_cancelled(task_id):
+            raise AnalysisCancelled(task_id)
 
-    def flush_thinking():
-        nonlocal thinking_buffer, buffered_chars, last_flush_at
-        if thinking_buffer:
-            _publish_thinking(task_id, step, "".join(thinking_buffer))
-            thinking_buffer = []
-            buffered_chars = 0
+        raw_parts = []
+        chunk_count = 0
+        parser = _PublicReasoningParser()
+        thinking_buffer = []
+        buffered_chars = 0
+        reasoning_chars = 0
+        thinking_done = False
         last_flush_at = time.monotonic()
 
-    def queue_thinking(text: str):
-        nonlocal buffered_chars, reasoning_chars
-        if not text or reasoning_chars >= MAX_PUBLIC_REASONING_CHARS:
-            return
-        remaining = MAX_PUBLIC_REASONING_CHARS - reasoning_chars
-        text = text[:remaining]
-        reasoning_chars += len(text)
-        thinking_buffer.append(text)
-        buffered_chars += len(text)
-        if (
-            buffered_chars >= settings.ai_stream_batch_chars
-            or (time.monotonic() - last_flush_at) * 1000 >= settings.ai_stream_batch_ms
-        ):
+        def flush_thinking():
+            nonlocal thinking_buffer, buffered_chars, last_flush_at
+            if thinking_buffer:
+                attempt_state["thinking_emitted"] = True
+                _publish_thinking(task_id, step, "".join(thinking_buffer))
+                thinking_buffer = []
+                buffered_chars = 0
+            last_flush_at = time.monotonic()
+
+        def queue_thinking(text: str):
+            nonlocal buffered_chars, reasoning_chars
+            if not text or reasoning_chars >= MAX_PUBLIC_REASONING_CHARS:
+                return
+            remaining = MAX_PUBLIC_REASONING_CHARS - reasoning_chars
+            text = text[:remaining]
+            reasoning_chars += len(text)
+            thinking_buffer.append(text)
+            buffered_chars += len(text)
+            if (
+                buffered_chars >= settings.ai_stream_batch_chars
+                or (time.monotonic() - last_flush_at) * 1000 >= settings.ai_stream_batch_ms
+            ):
+                flush_thinking()
+
+        def finish_thinking():
+            nonlocal thinking_done
+            if not parser.reasoning_started or thinking_done:
+                return
             flush_thinking()
+            attempt_state["thinking_emitted"] = True
+            _publish_thinking(task_id, step, done=True)
+            thinking_done = True
 
-    def finish_thinking():
-        nonlocal thinking_done
-        if not parser.reasoning_started or thinking_done:
-            return
+        for chunk in llm.stream(prompt):
+            chunk_count += 1
+            # 节流取消检查，避免每个 token 都访问一次 Redis。
+            if chunk_count % settings.ai_cancel_check_interval_tokens == 0 and is_cancelled(task_id):
+                finish_thinking()
+                raise AnalysisCancelled(task_id)
+            if chunk.content:
+                raw_parts.append(chunk.content)
+                parser.feed(chunk.content, queue_thinking, finish_thinking)
         flush_thinking()
-        _publish_thinking(task_id, step, done=True)
-        thinking_done = True
-
-    for chunk in llm.stream(prompt):
-        chunk_count += 1
-        # 节流取消检查，避免每个 token 都访问一次 Redis。
-        if chunk_count % settings.ai_cancel_check_interval_tokens == 0 and is_cancelled(task_id):
+        if is_cancelled(task_id):
             finish_thinking()
             raise AnalysisCancelled(task_id)
-        if chunk.content:
-            raw_parts.append(chunk.content)
-            parser.feed(chunk.content, queue_thinking, finish_thinking)
-    flush_thinking()
-    if is_cancelled(task_id):
-        finish_thinking()
-        raise AnalysisCancelled(task_id)
-    return parser.output("".join(raw_parts))
+        return parser.output("".join(raw_parts))
+
+    def before_retry(retry_state):
+        error = retry_state.outcome.exception() if retry_state.outcome else None
+        if is_cancelled(task_id):
+            raise AnalysisCancelled(task_id)
+        if attempt_state["thinking_emitted"]:
+            _publish_thinking(task_id, step, reset=True)
+        log.warning(
+            "LLM 流式响应中断，正在重试: step=%s attempt=%d/%d error_type=%s",
+            step,
+            retry_state.attempt_number,
+            STREAM_MAX_ATTEMPTS,
+            type(error).__name__ if error else "UnknownError",
+        )
+
+    @retry(
+        retry=retry_if_exception(_is_retryable_stream_error),
+        stop=stop_after_attempt(STREAM_MAX_ATTEMPTS),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        before_sleep=before_retry,
+        reraise=True,
+    )
+    def invoke_with_retry():
+        return invoke_once()
+
+    return invoke_with_retry()

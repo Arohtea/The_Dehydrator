@@ -309,6 +309,11 @@ function recordThinking(message) {
     entry = { step, text: '', done: false, interrupted: false }
     thinkingEntries.value.push(entry)
   }
+  if (message.reset) {
+    entry.text = ''
+    entry.done = false
+    entry.interrupted = false
+  }
   if (typeof message.text === 'string' && message.text) entry.text += message.text
   if (message.done) {
     entry.done = true
