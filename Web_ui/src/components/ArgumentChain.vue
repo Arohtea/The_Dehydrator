@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, nextTick } from 'vue'
+import { AlertTriangle } from 'lucide-vue-next'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
@@ -11,9 +12,24 @@ const mainClaim = computed(() => props.data?.main_conclusion || props.data?.main
 const steps = computed(() => props.data?.argument_chain || props.data?.arguments)
 const containerRef = ref(null)
 
+const flawSeverityMap = {
+  high: { label: '高风险', cls: 'text-red-700 bg-red-50 border-red-100' },
+  medium: { label: '中风险', cls: 'text-amber-700 bg-amber-50 border-amber-100' },
+  low: { label: '低风险', cls: 'text-blue-700 bg-blue-50 border-blue-100' },
+}
+
 function getClaim(arg, index) {
   if (typeof arg === 'string') return arg
   return arg?.claim || `第 ${index + 1} 条论据`
+}
+
+function flawLabel(arg) {
+  const count = Number(arg?.logic_flaw_count) || 1
+  return count > 1 ? `${count} 处逻辑漏洞` : '存在逻辑漏洞'
+}
+
+function flawSeverity(arg) {
+  return flawSeverityMap[arg?.logic_flaw_severity] || flawSeverityMap.low
 }
 
 onMounted(async () => {
@@ -56,6 +72,11 @@ onMounted(async () => {
             </span>
             <div class="min-w-0">
               <p class="mb-3 font-medium leading-relaxed">{{ getClaim(arg, i) }}</p>
+              <div v-if="arg?.logic_flaw" class="mb-3 inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs" :class="flawSeverity(arg).cls">
+                <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
+                <span>{{ flawLabel(arg) }}</span>
+                <span>{{ flawSeverity(arg).label }}</span>
+              </div>
               <div v-if="arg?.evidence" class="mb-2">
                 <p class="mb-1 text-xs font-medium text-primary">证据/数据</p>
                 <p class="text-sm leading-relaxed text-text-muted">{{ arg.evidence }}</p>

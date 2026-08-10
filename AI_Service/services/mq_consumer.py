@@ -156,7 +156,7 @@ async def _process_message(message: aio_pika.IncomingMessage):
                 raise ValueError("未找到该文档的内容")
             log.info("doc_id=%s, 检索到 %d 个片段", doc_id, len(chunks))
 
-            from services.argument_chain import extract_argument_chain
+            from services.argument_chain import annotate_logic_flaws, extract_argument_chain
             from services.logic_flaw import detect_logic_flaws
             from services.cross_validation import cross_validate
 
@@ -177,6 +177,7 @@ async def _process_message(message: aio_pika.IncomingMessage):
                                           reference_library_ids=reference_library_ids)
                 flaws = f_flaws.result()
                 validation = f_valid.result()
+            chain = annotate_logic_flaws(chain, flaws)
 
             report(100, "快速分析完成" if mode == "quick" else "深度分析完成")
             return chain, flaws, validation

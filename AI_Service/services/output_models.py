@@ -13,6 +13,9 @@ class ArgumentStep(BaseModel):
     evidence: str = Field(default="", max_length=10_000)
     reasoning: str = Field(default="", max_length=10_000)
     relation_to_next: str = Field(default="", max_length=1_000)
+    logic_flaw: bool = False
+    logic_flaw_count: int = Field(default=0, ge=0, le=100)
+    logic_flaw_severity: Literal["high", "medium", "low"] | None = None
 
 
 class ArgumentChainResult(BaseModel):
@@ -24,6 +27,7 @@ class ArgumentChainResult(BaseModel):
 class LogicFlaw(BaseModel):
     type: str = Field(default="", max_length=1_000)
     location: str = Field(default="", max_length=1_000)
+    step_numbers: list[int] = Field(default_factory=list, max_length=100)
     description: str = Field(default="", max_length=10_000)
     severity: Literal["high", "medium", "low"] = "low"
     suggestion: str = Field(default="", max_length=10_000)
@@ -38,8 +42,6 @@ class LogicFlawResult(BaseModel):
 class WebSource(BaseModel):
     title: str = Field(default="", max_length=2_000)
     url: str = Field(default="", max_length=4_000)
-    snippet: str = Field(default="", max_length=10_000)
-    score: float | None = None
 
 
 class CrossValidationResult(BaseModel):

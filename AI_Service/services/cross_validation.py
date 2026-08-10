@@ -13,7 +13,7 @@ from services.output_models import CrossValidationResult, parse_and_validate
 
 MAX_WEB_QUERY_CHARS = 2_000
 MAX_WEB_EVIDENCE_CHARS = 12_000
-MAX_WEB_SOURCE_SNIPPET_CHARS = 2_000
+MAX_WEB_CONTENT_CHARS = 2_000
 
 
 def _normalize_web_sources(results: list[dict]) -> list[dict]:
@@ -30,10 +30,17 @@ def _normalize_web_sources(results: list[dict]) -> list[dict]:
         sources.append({
             "title": title,
             "url": url,
-            "snippet": str(result.get("content") or "").strip()[:MAX_WEB_SOURCE_SNIPPET_CHARS],
+            "content": str(result.get("content") or "").strip()[:MAX_WEB_CONTENT_CHARS],
             "score": float(score) if isinstance(score, (int, float)) else None,
         })
     return sources
+
+
+def _public_web_sources(results: list[dict]) -> list[dict]:
+    return [
+        {"title": result.get("title", ""), "url": result.get("url", "")}
+        for result in results[:5]
+    ]
 
 
 def _format_web_evidence(results: list[dict]) -> str:
@@ -41,7 +48,7 @@ def _format_web_evidence(results: list[dict]) -> str:
     for result in results[:5]:
         title = str(result.get("title") or "未命名网页").strip()
         url = str(result.get("url") or "").strip()
-        content = str(result.get("snippet") or result.get("content") or "").strip()
+        content = str(result.get("content") or "").strip()
         score = result.get("score")
         score_text = f"{score:.4f}" if isinstance(score, (int, float)) else "未知"
         evidence.append(
@@ -121,8 +128,9 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         top_k=3,
     )
     reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
-    web_sources = [] if quick_mode else _web_search(claim, task_id, tavily_api_key)
-    web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _format_web_evidence(web_sources)
+    web_results = [] if quick_mode else _web_search(claim, task_id, tavily_api_key)
+    public_web_sources = _public_web_sources(web_results)
+    web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _format_web_evidence(web_results)
     mode_note = (
         "当前为快速分析模式：只能基于模型自身知识与可选参考资料判断，"
         "禁止把当前上传论文内容当作验证证据，不执行联网搜索。"
@@ -152,7 +160,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
             "local_evidence_summary": "结果不可用，模型输出无法解析",
             "reference_evidence_summary": "已提供参考资料" if reference_results else "未提供参考资料",
             "web_evidence_summary": "未执行联网验证（快速分析模式）" if quick_mode else "结果不可用",
-            "web_sources": web_sources,
+            "web_sources": public_web_sources,
             "contradictions": [],
             "supplements": [],
             "conclusion": "本条交叉验证结果不可用，请重新分析",
@@ -163,7 +171,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
     if quick_mode and not result.get("web_evidence_summary"):
         result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
-    result["web_sources"] = web_sources
+    result["web_sources"] = public_web_sources
     return result
 
 

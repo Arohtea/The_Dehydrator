@@ -1,9 +1,63 @@
+import re
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from prompts.argument_chain import MAP_PROMPT, REDUCE_PROMPT
 from services.llm import get_chat_model
 from services.model_config import AIModelConfig
 from services.stream_publisher import stream_invoke
 from services.output_models import ArgumentChainResult, parse_and_validate
+
+
+_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
+def annotate_logic_flaws(argument_chain: dict, logic_flaw_result: dict) -> dict:
+    """把逻辑漏洞结果映射为论据步骤上的轻量风险标记。
+
+    Args:
+        argument_chain: 已完成结构化的论据链。
+        logic_flaw_result: 逻辑漏洞检测结果。
+
+    Returns:
+        增加步骤风险标记后的论据链。原有论据文本不会被删除或改写。
+    """
+    steps = argument_chain.get("argument_chain")
+    flaws = logic_flaw_result.get("flaws") if isinstance(logic_flaw_result, dict) else None
+    if not isinstance(steps, list) or not isinstance(flaws, list):
+        return argument_chain
+
+    flaws_by_step = {}
+    for flaw in flaws:
+        if not isinstance(flaw, dict):
+            continue
+        step_numbers = flaw.get("step_numbers")
+        if not isinstance(step_numbers, list) or not step_numbers:
+            location = str(flaw.get("location") or "")
+            step_numbers = [int(value) for value in re.findall(r"\d+", location)]
+        severity = flaw.get("severity") if flaw.get("severity") in _SEVERITY_RANK else "low"
+        for step_number in step_numbers:
+            try:
+                normalized_step = int(step_number)
+            except (TypeError, ValueError):
+                continue
+            flaws_by_step.setdefault(normalized_step, []).append(severity)
+
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        try:
+            step_number = int(step.get("step"))
+        except (TypeError, ValueError):
+            step_number = index
+        severities = flaws_by_step.get(step_number, [])
+        step["logic_flaw"] = bool(severities)
+        step["logic_flaw_count"] = len(severities)
+        step["logic_flaw_severity"] = max(
+            severities,
+            key=lambda severity: _SEVERITY_RANK[severity],
+            default=None,
+        )
+    return argument_chain
 
 
 def extract_argument_chain(chunks: list[str], text_config: AIModelConfig,
