@@ -45,6 +45,7 @@ public class AnalysisStreamService {
             String key = streamKey(taskId);
             String payload = objectMapper.writeValueAsString(event);
             RecordId recordId = redisTemplate.opsForStream().add(key, Map.of("data", payload));
+            // 先写入再裁剪并刷新 TTL，保证新连接可以回放最近事件且不会无限增长。
             redisTemplate.opsForStream().trim(key, streamMaxLength, true);
             redisTemplate.expire(key, Duration.ofSeconds(streamTtlSeconds));
             return recordId == null ? "" : recordId.getValue();
@@ -93,6 +94,7 @@ public class AnalysisStreamService {
      * @return 按 Redis Stream ID 排序的事件记录
      */
     public List<MapRecord<String, Object, Object>> replay(String taskId) {
+        // 回放接口用于 SSE 首次连接和断线重连，保留事件顺序由 Redis Stream ID 保证。
         return redisTemplate.opsForStream().range(streamKey(taskId), Range.unbounded());
     }
 
@@ -148,6 +150,12 @@ public class AnalysisStreamService {
         return value == null ? "" : value.toString();
     }
 
+    /**
+     * 生成任务专属 Redis Stream Key。
+     *
+     * @param taskId 分析任务 ID
+     * @return 带部署前缀的 Stream Key
+     */
     private String streamKey(String taskId) {
         return streamPrefix + taskId;
     }

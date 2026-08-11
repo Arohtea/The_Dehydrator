@@ -9,6 +9,9 @@ import org.springframework.stereotype.Service;
 import java.net.URI;
 import java.net.URISyntaxException;
 
+/**
+ * 管理数据库中的模型、联网和文档处理参数，并在使用前保证配置完整。
+ */
 @Service
 public class SystemSettingsService {
 
@@ -39,6 +42,7 @@ public class SystemSettingsService {
      * @return 保存后的设置
      */
     public SystemSettings save(SystemSettingsUpdate input) {
+        // 更新接口只覆盖非空字段，前端提交脱敏值时不会意外清空已保存的 Secret。
         SystemSettings existing = repo.findById("default").orElse(new SystemSettings());
         updateModelSettings(existing, input.textModel(), true);
         updateModelSettings(existing, input.vectorModel(), false);
@@ -80,6 +84,14 @@ public class SystemSettingsService {
         return settings.getVectorModelConfig();
     }
 
+    /**
+     * 将单个模型更新 DTO 的非空字段合并到现有设置。
+     *
+     * @param existing 当前数据库设置
+     * @param input 前端提交的模型更新
+     * @param textModel true 表示文本模型，false 表示向量模型
+     * @throws IllegalArgumentException 脱敏 Key 被误当成新值提交
+     */
     private void updateModelSettings(SystemSettings existing,
                                      SystemSettingsUpdate.ModelSettingsUpdate input,
                                      boolean textModel) {
@@ -104,6 +116,12 @@ public class SystemSettingsService {
         }
     }
 
+    /**
+     * 校验切分和并发参数的完整性及基本关系。
+     *
+     * @param settings 待保存设置
+     * @throws IllegalArgumentException 参数缺失或重叠长度不合法
+     */
     private void validateProcessingConfig(SystemSettings settings) {
         if (settings.getMapWorkers() == null
                 || settings.getChunkSize() == null
@@ -115,6 +133,12 @@ public class SystemSettingsService {
         }
     }
 
+    /**
+     * 允许模型三项同时为空，但禁止只填写其中一部分。
+     *
+     * @param config 待校验模型配置
+     * @param label 用户可读的模型名称
+     */
     private void validateOptionalModelConfig(AiModelConfig config, String label) {
         if (isBlank(config.model()) && isBlank(config.url()) && isBlank(config.apiKey())) {
             return;
@@ -122,6 +146,13 @@ public class SystemSettingsService {
         validateModelConfig(config, label);
     }
 
+    /**
+     * 校验模型名称、接口地址、Key 长度和 HTTP/HTTPS 地址格式。
+     *
+     * @param config 待校验模型配置
+     * @param label 用户可读的模型名称
+     * @throws IllegalArgumentException 配置不完整或格式错误
+     */
     private void validateModelConfig(AiModelConfig config, String label) {
         if (config == null || isBlank(config.model())) {
             throw new IllegalArgumentException(label + "名称不能为空");
@@ -152,6 +183,12 @@ public class SystemSettingsService {
         }
     }
 
+    /**
+     * 判断字符串是否为空或只包含空白。
+     *
+     * @param value 待判断字符串
+     * @return 为空或空白时返回 true
+     */
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }

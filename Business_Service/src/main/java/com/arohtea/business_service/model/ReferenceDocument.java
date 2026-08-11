@@ -11,6 +11,12 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 参考资料库中的文档元数据。
+ *
+ * <p>`sourceDocumentId` 非空时表示它是分析文档的自动归档镜像，MinIO 对象可与
+ * 原始文档复用，但 Qdrant 向量使用独立的 AI 文档 ID。</p>
+ */
 @Data
 @Entity
 @Table(name = "reference_documents")
@@ -34,6 +40,9 @@ public class ReferenceDocument {
 
     private LocalDateTime createdAt;
 
+    /**
+     * 在首次持久化时记录参考资料创建时间。
+     */
     @PrePersist
     void prePersist() {
         createdAt = LocalDateTime.now();

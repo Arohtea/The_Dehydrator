@@ -1,3 +1,5 @@
+"""AI Service 接收的文本模型和向量模型配置校验。"""
+
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
@@ -5,7 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 class AIModelConfig(BaseModel):
-    """一次 AI 调用使用的 OpenAI 兼容模型配置。"""
+    """一次 AI 调用使用的 OpenAI 兼容模型配置。
+
+    `api_key` 使用 `apiKey` 作为外部 JSON/消息字段别名，以兼容 Business Service
+    的驼峰命名协议；内部 Python 代码统一使用蛇形命名。
+    """
 
     model: str = Field(min_length=1, max_length=100)
     url: str = Field(min_length=1, max_length=2_048)
@@ -16,11 +22,13 @@ class AIModelConfig(BaseModel):
     @field_validator("model", "url", "api_key", mode="before")
     @classmethod
     def strip_text(cls, value):
+        """清理配置字符串两端空白，保留非字符串值交给 Pydantic 校验。"""
         return value.strip() if isinstance(value, str) else value
 
     @field_validator("url")
     @classmethod
     def validate_url(cls, value: str) -> str:
+        """限制模型地址为 HTTP/HTTPS，并统一为带尾斜杠的基础 URL。"""
         parsed = urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("接口 URL 必须是有效的 HTTP/HTTPS 地址")

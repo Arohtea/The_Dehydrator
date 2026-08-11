@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * 管理员设置查询与保存接口，所有响应都对模型 Key 和 Tavily Key 做脱敏处理。
+ */
 @RestController
 @RequestMapping("/api/settings")
 @RequiredArgsConstructor
@@ -44,6 +47,12 @@ public class SettingsController {
         }
     }
 
+    /**
+     * 将数据库设置转换为前端可展示的脱敏结构。
+     *
+     * @param s 数据库设置
+     * @return 不包含真实 Secret 的响应结构
+     */
     private Map<String, Object> toResponse(SystemSettings s) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("textModel", modelResponse(s.getTextModelName(), s.getTextModelUrl(), s.getTextModelApiKey()));
@@ -57,6 +66,14 @@ public class SettingsController {
         return r;
     }
 
+    /**
+     * 组装单个模型的脱敏响应。
+     *
+     * @param model 模型名称
+     * @param url 接口 URL
+     * @param apiKey 原始 Key，仅用于判断配置状态和生成掩码
+     * @return 模型名称、地址和 Key 状态
+     */
     private Map<String, Object> modelResponse(String model, String url, String apiKey) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("model", model);
@@ -66,6 +83,12 @@ public class SettingsController {
         return response;
     }
 
+    /**
+     * 生成固定掩码，不根据 Key 长度泄露额外信息。
+     *
+     * @param apiKey 原始 API Key
+     * @return 固定掩码；未配置时返回 null
+     */
     private String maskedPreview(String apiKey) {
         return apiKey != null && !apiKey.isBlank() ? "***********" : null;
     }

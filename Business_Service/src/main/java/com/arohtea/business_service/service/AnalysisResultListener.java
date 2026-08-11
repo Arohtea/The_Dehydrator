@@ -13,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+/**
+ * 消费 AI Service 的分析结果和进度消息，并以任务行锁更新数据库与 Redis Stream。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,6 +29,14 @@ public class AnalysisResultListener {
 
     @RabbitListener(queues = "${messaging.analysis.result-queue}")
     @Transactional
+    /**
+     * 处理单条分析结果消息。
+     *
+     * @param message AI Service 发布的 JSON 结果、失败或取消确认
+     *
+     * <p>消息来源、任务 ID 和当前状态都会被校验；取消中的任务拒绝迟到的
+     * 成功结果，防止协作式取消被异步消息重新覆盖。</p>
+     */
     public void onResult(String message) {
         try {
             JsonNode node = objectMapper.readTree(message);
@@ -111,6 +122,11 @@ public class AnalysisResultListener {
 
     @RabbitListener(queues = "${messaging.analysis.progress-queue}")
     @Transactional
+    /**
+     * 处理分析进度消息并同步到任务记录和实时事件流。
+     *
+     * @param message AI Service 发布的 JSON 进度消息
+     */
     public void onProgress(String message) {
         try {
             JsonNode node = objectMapper.readTree(message);
@@ -124,6 +140,7 @@ public class AnalysisResultListener {
                 return;
             }
             taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
+                // 只有处理中任务接受进度，CANCELLING 和终态任务的旧进度必须丢弃。
                 if (task.getStatus() != TaskStatus.PROCESSING) return;
                 int progress = Math.max(0, Math.min(100, node.path("progress").asInt()));
                 String currentStep = node.path("currentStep").asText("分析中...");

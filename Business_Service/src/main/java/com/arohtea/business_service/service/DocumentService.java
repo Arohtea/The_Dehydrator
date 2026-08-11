@@ -23,6 +23,12 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
+/**
+ * 分析文档的上传、查询和删除编排服务。
+ *
+ * <p>上传先持久化 MinIO 对象和 PostgreSQL 元数据，再异步调用 AI Service；删除
+ * 则反向等待活动任务取消后才清理数据库、对象存储和向量。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -70,6 +76,7 @@ public class DocumentService {
         Document saved = documentRepository.save(doc);
         referenceArchiveService.createAnalysisMirror(saved);
 
+        // 保存设置快照并在异步线程中复用，保证一次上传不会因设置页修改而使用混合参数。
         String docId = saved.getId();
         CompletableFuture.runAsync(() -> {
             String aiDocId = null;
@@ -147,6 +154,11 @@ public class DocumentService {
         analysisService.removeTasksForDeletedDocument(id);
     }
 
+    /**
+     * 确保分析文档使用的 MinIO bucket 已创建。
+     *
+     * @throws Exception MinIO 查询或创建 bucket 失败
+     */
     private void ensureBucket() throws Exception {
         if (!minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build())) {
             minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());

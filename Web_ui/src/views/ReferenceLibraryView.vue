@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 参考资料库管理页。
+ *
+ * 资料库、文件夹、分类和参考文件共用 Store 中的状态；切换资料库时使用递增令牌
+ * 丢弃较早请求的返回值，防止用户快速点击不同资料库后，慢请求把旧资料覆盖到当前视图。
+ */
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
@@ -40,10 +46,12 @@ const deletingFolderId = ref('')
 const deletingCategoryId = ref('')
 let librarySelectionToken = 0
 
+// 右侧编辑区始终以当前选中的资料库为准，列表删除后会自然退回到下一个可用资料库。
 const activeLibrary = computed(() =>
   referenceLibraries.value.find(item => item.id === selectedLibraryId.value) || null
 )
 
+// 先加载资料库列表，再默认进入第一项；没有资料库时保留空状态供用户新建。
 onMounted(async () => {
   const libraries = await store.fetchReferenceLibraries()
   if (libraries.length) {
@@ -51,6 +59,15 @@ onMounted(async () => {
   }
 })
 
+/**
+ * 切换当前资料库并并行加载其文档、文件夹和分类。
+ *
+ * 每次切换都会生成新的选择令牌。只有最后一次选择仍然有效时，异步请求结果才会
+ * 提交到共享状态；这保证快速切换时不会把旧资料库的内容显示在新资料库下。
+ *
+ * @param {string|number} libraryId 要查看的资料库 ID。
+ * @returns {Promise<void>} 资料库三类资源加载完成后返回。
+ */
 async function selectLibrary(libraryId) {
   const selectionToken = ++librarySelectionToken
   selectedLibraryId.value = libraryId
@@ -79,6 +96,11 @@ async function selectLibrary(libraryId) {
   }
 }
 
+/**
+ * 创建资料库并自动切换到新建资料库。
+ *
+ * @returns {Promise<void>} 创建和首次资源加载完成后返回。
+ */
 async function createLibrary() {
   if (!createLibraryName.value.trim() || creatingLibrary.value) return
   creatingLibrary.value = true
@@ -93,6 +115,15 @@ async function createLibrary() {
   }
 }
 
+/**
+ * 删除普通资料库，并在删除当前项后选择剩余列表中的第一项。
+ *
+ * 系统资料库承载分析上传文档的自动归档，前端在请求前直接阻止删除；普通资料库仍
+ * 需要用户确认，具体的“只能删除空资料库”约束由服务端最终判断。
+ *
+ * @param {Object} library 待删除的资料库对象。
+ * @returns {Promise<void>} 删除及选中项调整完成后返回。
+ */
 async function removeLibrary(library) {
   if (library.systemKey) {
     alert('系统资料库不允许删除')
@@ -120,6 +151,15 @@ async function removeLibrary(library) {
   }
 }
 
+/**
+ * 向当前资料库上传一个参考文件并刷新其文档列表。
+ *
+ * 选择器值会在读取文件后立即清空，因此用户可以再次选择同名文件触发 change；
+ * 上传锁则保证同一资料库不会并发提交两个文件。
+ *
+ * @param {Event} event 文件输入框变更事件。
+ * @returns {Promise<void>} 上传和列表刷新完成后返回。
+ */
 async function uploadFiles(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
@@ -135,6 +175,11 @@ async function uploadFiles(event) {
   }
 }
 
+/**
+ * 在当前资料库创建文件夹，并清空已提交的名称。
+ *
+ * @returns {Promise<void>} 创建请求完成后返回。
+ */
 async function createFolder() {
   if (!selectedLibraryId.value || !createFolderName.value.trim() || creatingFolder.value) return
   creatingFolder.value = true
@@ -148,6 +193,11 @@ async function createFolder() {
   }
 }
 
+/**
+ * 在当前资料库创建分类，并清空已提交的名称。
+ *
+ * @returns {Promise<void>} 创建请求完成后返回。
+ */
 async function createCategory() {
   if (!selectedLibraryId.value || !createCategoryName.value.trim() || creatingCategory.value) return
   creatingCategory.value = true
@@ -161,6 +211,12 @@ async function createCategory() {
   }
 }
 
+/**
+ * 保存文件夹的重命名结果；失败时重新读取列表恢复服务端值。
+ *
+ * @param {Object} folder 正在编辑的文件夹对象。
+ * @returns {Promise<void>} 保存请求完成后返回。
+ */
 async function renameFolder(folder) {
   if (!folder.name?.trim() || renamingFolderId.value) return
   renamingFolderId.value = folder.id
@@ -174,6 +230,12 @@ async function renameFolder(folder) {
   }
 }
 
+/**
+ * 保存分类的重命名结果；失败时重新读取列表恢复服务端值。
+ *
+ * @param {Object} category 正在编辑的分类对象。
+ * @returns {Promise<void>} 保存请求完成后返回。
+ */
 async function renameCategory(category) {
   if (!category.name?.trim() || renamingCategoryId.value) return
   renamingCategoryId.value = category.id
@@ -187,6 +249,12 @@ async function renameCategory(category) {
   }
 }
 
+/**
+ * 删除文件夹并刷新文档列表，以反映服务端对关联资料的处理结果。
+ *
+ * @param {Object} folder 待删除的文件夹对象。
+ * @returns {Promise<void>} 删除请求和资料列表刷新完成后返回。
+ */
 async function removeFolder(folder) {
   if (!confirm(`确定删除文件夹「${folder.name}」？`) || deletingFolderId.value) return
   deletingFolderId.value = folder.id
@@ -200,6 +268,12 @@ async function removeFolder(folder) {
   }
 }
 
+/**
+ * 删除分类并刷新文档列表，以反映服务端对关联资料的处理结果。
+ *
+ * @param {Object} category 待删除的分类对象。
+ * @returns {Promise<void>} 删除请求和资料列表刷新完成后返回。
+ */
 async function removeCategory(category) {
   if (!confirm(`确定删除分类「${category.name}」？`) || deletingCategoryId.value) return
   deletingCategoryId.value = category.id
@@ -213,6 +287,15 @@ async function removeCategory(category) {
   }
 }
 
+/**
+ * 保存参考文档的展示名称、文件夹和分类归属。
+ *
+ * 单个文档使用 ID 锁避免重复提交；失败时重新读取当前资料库文档，撤销输入框中
+ * 尚未被服务端接受的本地编辑。
+ *
+ * @param {Object} doc 正在编辑的参考文档对象。
+ * @returns {Promise<void>} 保存请求完成后返回。
+ */
 async function saveDocument(doc) {
   if (savingDocumentId.value) return
   savingDocumentId.value = doc.id
@@ -230,6 +313,15 @@ async function saveDocument(doc) {
   }
 }
 
+/**
+ * 删除普通参考文件并刷新当前资料库文档列表。
+ *
+ * 自动归档的源文档不会显示删除按钮；其生命周期由分析文档删除流程负责，避免在
+ * 资料库页面绕过业务关联约束。
+ *
+ * @param {Object} doc 待删除的参考文档对象。
+ * @returns {Promise<void>} 删除请求和列表刷新完成后返回。
+ */
 async function removeDocument(doc) {
   if (!confirm(`确定删除参考文件「${doc.displayName || doc.filename}」？`) || deletingDocumentId.value) return
   deletingDocumentId.value = doc.id

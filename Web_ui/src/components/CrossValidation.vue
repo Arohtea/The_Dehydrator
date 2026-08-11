@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 交叉验证结果展示组件。
+ *
+ * 每条论据默认折叠，展开后同时展示模型知识、参考资料证据和联网来源；外部链接
+ * 只有在协议为 HTTP(S) 时才渲染为可点击链接，避免把模型输出直接当作任意导航地址。
+ */
 import { AlertCircle, CheckCircle, ChevronDown, ExternalLink, XCircle } from 'lucide-vue-next'
 import { computed, ref, onMounted, nextTick } from 'vue'
 import gsap from 'gsap'
@@ -15,6 +21,13 @@ const props = defineProps({
 })
 
 const expanded = ref({})
+
+/**
+ * 切换指定论据的展开状态。
+ *
+ * @param {number} i 论据在结果数组中的索引。
+ * @returns {void} 只更新当前组件的展开记录。
+ */
 const toggle = (i) => { expanded.value[i] = !expanded.value[i] }
 
 const statusMap = {
@@ -28,10 +41,17 @@ const containerRef = ref(null)
 const localEvidenceLabel = computed(() => '模型知识')
 const localEvidenceFallback = computed(() => '未提供模型知识摘要')
 
+/**
+ * 检查来源地址是否允许作为新窗口链接展示。
+ *
+ * @param {string} url 模型返回的来源地址。
+ * @returns {boolean} 仅标准 HTTP(S) 地址返回 true。
+ */
 function isSafeSourceUrl(url) {
   return /^https?:\/\//i.test(String(url || ''))
 }
 
+// 交叉验证卡片渲染后才绑定滚动触发器，保证每条证据在进入视口时平滑出现。
 onMounted(async () => {
   await nextTick()
   if (containerRef.value) {
@@ -52,11 +72,32 @@ onMounted(async () => {
   }
 })
 
-// 为展开收起动作添加平滑效果
+/**
+ * 初始化展开区域的起始样式，供 Vue transition 在插入时测量高度。
+ *
+ * @param {HTMLElement} el 即将展开的 DOM 节点。
+ * @returns {void} 设置动画初始样式。
+ */
 const beforeEnter = (el) => { el.style.height = '0'; el.style.opacity = '0' }
+
+/**
+ * 使用 GSAP 展开证据详情，并在动画结束后通知 Vue transition 完成。
+ *
+ * @param {HTMLElement} el 正在展开的 DOM 节点。
+ * @param {() => void} done Vue transition 完成回调。
+ * @returns {void} 启动展开动画。
+ */
 const enter = (el, done) => {
   gsap.to(el, { height: 'auto', opacity: 1, duration: 0.4, ease: 'power2.out', onComplete: done })
 }
+
+/**
+ * 使用 GSAP 收起证据详情，并在动画结束后移除节点。
+ *
+ * @param {HTMLElement} el 正在收起的 DOM 节点。
+ * @param {() => void} done Vue transition 完成回调。
+ * @returns {void} 启动收起动画。
+ */
 const leave = (el, done) => {
   gsap.to(el, { height: 0, opacity: 0, duration: 0.3, ease: 'power2.in', onComplete: done })
 }

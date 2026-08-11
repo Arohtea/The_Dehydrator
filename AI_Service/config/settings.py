@@ -1,3 +1,9 @@
+"""AI Service 的运行时配置模型。
+
+配置统一从仓库根目录下的 `docker/.env` 读取，并在应用导入阶段完成基础值、
+占位符和容量关系校验；这样服务不会带着不完整的基础设施配置启动。
+"""
+
 from pathlib import Path
 
 from pydantic import Field, model_validator
@@ -8,6 +14,13 @@ ENV_FILE = Path(__file__).resolve().parents[2] / "docker" / ".env"
 
 
 class Settings(BaseSettings):
+    """AI Service 使用的基础设施、容量和限流配置。
+
+    字段名称与 `docker/.env` 的大写环境变量通过 Pydantic Settings 自动映射；
+    模型、向量和 Tavily 的业务配置不在这里保存，而是由 Business Service 在
+    每次请求或消息中显式传入。
+    """
+
     ai_service_host: str
     ai_service_port: int = Field(ge=1, le=65535)
     ai_request_timeout_seconds: int = Field(gt=0)
@@ -60,7 +73,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_configuration(self):
-        """拒绝空值、占位符和不一致的容量配置。"""
+        """拒绝空值、占位符和不一致的容量配置。
+
+        Returns:
+            完成校验后的当前配置对象。
+
+        Raises:
+            ValueError: 必需配置为空、仍是示例占位符，或请求体容量小于单文件
+                上传容量时抛出。
+        """
         required_values = {
             "AI_SERVICE_HOST": self.ai_service_host,
             "INTERNAL_SERVICE_TOKEN": self.internal_service_token,

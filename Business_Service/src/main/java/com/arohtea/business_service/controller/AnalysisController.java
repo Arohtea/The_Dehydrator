@@ -15,6 +15,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 分析任务创建、查询和取消接口。
+ *
+ * <p>控制器只做请求格式和 HTTP 状态码适配，任务并发、配置快照和状态迁移由
+ * `AnalysisService` 负责。</p>
+ */
 @RestController
 @RequestMapping("/api/analysis")
 @RequiredArgsConstructor
@@ -25,6 +31,12 @@ public class AnalysisController {
     private final RequestRateLimiter requestRateLimiter;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 为已完成向量化的文档创建分析任务。
+     *
+     * @param body 包含 documentId、mode 和参考资料库 ID 的请求体
+     * @return 创建后的任务，或参数错误、资源未就绪、限流和业务冲突响应
+     */
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody Map<String, Object> body) {
         String docId = body.get("documentId") instanceof String value ? value : null;
@@ -64,6 +76,12 @@ public class AnalysisController {
         }
     }
 
+    /**
+     * 查询单个分析任务及其结构化结果。
+     *
+     * @param taskId 任务 ID
+     * @return 任务响应；任务不存在时返回 404
+     */
     @GetMapping("/task/{taskId}")
     public ResponseEntity<?> getTask(
             @PathVariable("taskId") String taskId) {
@@ -74,6 +92,12 @@ public class AnalysisController {
         return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
     }
 
+    /**
+     * 查询指定文档的全部历史任务。
+     *
+     * @param documentId 文档 ID
+     * @return 按创建时间升序排列的任务响应列表
+     */
     @GetMapping("/document/{documentId}")
     public ResponseEntity<List<AnalysisTaskResponse>> getByDocument(
             @PathVariable("documentId") String documentId) {
@@ -82,6 +106,12 @@ public class AnalysisController {
                 .toList());
     }
 
+    /**
+     * 请求取消分析任务。
+     *
+     * @param taskId 任务 ID
+     * @return 进入 CANCELLING 或已结束状态的任务响应；不存在时返回 404
+     */
     @PostMapping("/task/{taskId}/cancel")
     public ResponseEntity<?> cancel(@PathVariable("taskId") String taskId) {
         AnalysisTask task = analysisService.cancelTask(taskId);
@@ -91,6 +121,12 @@ public class AnalysisController {
         return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
     }
 
+    /**
+     * 从非类型化 JSON 请求中提取字符串列表，丢弃空值和非字符串元素。
+     *
+     * @param value 请求体中的任意值
+     * @return 可交给服务层继续清洗的字符串列表
+     */
     private List<String> extractStringList(Object value) {
         if (!(value instanceof List<?> list)) {
             return List.of();

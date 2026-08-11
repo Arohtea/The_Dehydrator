@@ -1,3 +1,9 @@
+"""分析相关 HTTP 接口。
+
+路由层只负责校验请求、读取 Qdrant 文档片段并组装模型配置；论据链、漏洞检测
+和交叉验证的实际执行分别委托给 `services` 中的业务函数。
+"""
+
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -13,6 +19,12 @@ router = APIRouter()
 
 
 class AnalysisRequest(BaseModel):
+    """分析接口共享的请求模型。
+
+    `mode` 决定是否执行 Tavily 联网搜索，`reference_library_ids` 限定交叉验证
+    可使用的参考资料范围；当前请求最多携带 50 个资料库 ID。
+    """
+
     doc_id: str = Field(min_length=1, max_length=100)
     mode: Literal["deep", "quick"] = "deep"
     reference_library_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
@@ -21,6 +33,18 @@ class AnalysisRequest(BaseModel):
 
 
 def _get_chunks(doc_id: str) -> list[str]:
+    """读取指定分析文档的文本片段并过滤空 payload。
+
+    Args:
+        doc_id: Qdrant 中分析文档的业务 ID。
+
+    Returns:
+        按 Qdrant 返回顺序排列的非空文本片段。
+
+    Notes:
+        通过 `source_type=analysis_document` 限定数据来源，避免把参考资料
+        向量误当作当前论文内容参与论据提取。
+    """
     points = get_document_points(doc_id, source_type="analysis_document")
     return [
         point.payload["text"]
@@ -43,6 +67,10 @@ async def argument_chain(
 
     Returns:
         文档 ID 与论据链结果。
+
+    Raises:
+        HTTPException: 文档不存在、模型 Header 无效或文档没有可分析内容时返回
+            对应的 HTTP 错误。
     """
     chunks = _get_chunks(req.doc_id)
     if not chunks:
@@ -73,6 +101,10 @@ async def logic_flaws(
 
     Returns:
         文档 ID 与逻辑漏洞结果。
+
+    Raises:
+        HTTPException: 文档不存在、模型 Header 无效或文档没有可分析内容时返回
+            对应的 HTTP 错误。
     """
     chunks = _get_chunks(req.doc_id)
     if not chunks:
@@ -104,6 +136,10 @@ async def cross_validation(
 
     Returns:
         文档 ID 与交叉验证结果。
+
+    Raises:
+        HTTPException: 文档不存在、模型配置无效，或深度模式缺少 Tavily API Key
+            时返回对应的 HTTP 错误。
     """
     chunks = _get_chunks(req.doc_id)
     if not chunks:

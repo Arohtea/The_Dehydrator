@@ -9,13 +9,29 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 gsap.registerPlugin(ScrollTrigger)
 
+// 这些引用用于首屏动画，动画完成后不参与业务状态，避免和路由页面相互耦合。
 const navRef = ref(null)
 const mainRef = ref(null)
 const route = useRoute()
 const router = useRouter()
 let lenis = null
+
+/**
+ * 将 GSAP 的时间刻度转换为 Lenis 所需的毫秒时间，保证平滑滚动和页面动画共用同一帧循环。
+ *
+ * @param {number} time GSAP ticker 提供的秒数时间戳。
+ * @returns {void} 仅推进 Lenis 状态，不产生业务返回值。
+ */
 const lenisTicker = (time) => lenis?.raf(time * 1000)
 
+/**
+ * 注销当前管理员并回到登录页。
+ *
+ * 即使服务端注销请求失败，也必须清掉前端页面入口；真正的会话有效性仍由路由守卫
+ * 和 API 响应拦截器共同确认。
+ *
+ * @returns {Promise<void>} 页面跳转完成后返回。
+ */
 async function handleLogout() {
   try {
     await logout()
@@ -25,10 +41,12 @@ async function handleLogout() {
 }
 
 const mainWidthClass = computed(() =>
+  // 资料库需要同时展示资源列表和编辑区，其余页面使用更窄的阅读宽度。
   route.path === '/reference-libraries' ? 'max-w-[1600px]' : 'max-w-5xl'
 )
 
 onMounted(() => {
+  // Lenis 只在根应用挂载期间存在，避免路由切换时重复创建全局滚动实例。
   // 1. 初始化 Lenis 平滑滚动
   lenis = new Lenis({
     duration: 1.2,
@@ -68,6 +86,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  // 移除 ticker 和 Lenis 监听，防止根组件卸载后继续访问已失效的 DOM。
   if (lenis) {
     lenis.destroy()
     gsap.ticker.remove(lenisTicker)

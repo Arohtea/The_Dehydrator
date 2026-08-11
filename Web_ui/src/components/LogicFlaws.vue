@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 逻辑漏洞结果展示组件。
+ *
+ * 组件把整体严谨度评分、逐条漏洞和修正建议按风险等级呈现；风险映射只影响视觉
+ * 语义，不改变分析服务返回的原始字段或排序。
+ */
 import { AlertTriangle, ShieldAlert, Info } from 'lucide-vue-next'
 import { onMounted, ref, nextTick } from 'vue'
 import gsap from 'gsap'
@@ -16,6 +22,7 @@ const severityMap = {
 
 const containerRef = ref(null)
 
+// 等结果节点生成后绑定滚动触发动画，避免空数据状态创建无效触发器。
 onMounted(async () => {
   await nextTick()
   if (containerRef.value) {

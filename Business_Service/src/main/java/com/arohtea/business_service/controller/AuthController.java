@@ -24,6 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+/**
+ * 管理员会话、CSRF Token 和当前身份接口。
+ */
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -87,6 +90,12 @@ public class AuthController {
         return Map.of("authenticated", true, "username", authentication.getName());
     }
 
+    /**
+     * 管理员登录请求。
+     *
+     * @param username 管理员用户名
+     * @param password 管理员密码
+     */
     public record LoginRequest(
             @NotBlank String username,
             @NotBlank String password) {

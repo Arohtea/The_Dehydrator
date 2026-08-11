@@ -1,4 +1,11 @@
 <script setup>
+/**
+ * 分析任务结果页。
+ *
+ * 页面同时消费服务端的任务快照和 Redis Stream 转发的 SSE 消息：轮询负责提供最终
+ * 状态的可靠兜底，SSE 负责实时展示阶段进度与公开分析依据。两条通道都可能重复、乱序
+ * 或暂时断开，因此本页只把可识别的增量合并到当前任务，并在任务结束后主动释放资源。
+ */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDocumentStore } from '@/stores/document'
 import { ChevronDown, Info, Loader2, RefreshCw, X } from 'lucide-vue-next'
@@ -41,8 +48,11 @@ const modeTextMap = {
 const terminalStatuses = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
 const activeStatuses = new Set(['PENDING', 'PROCESSING', 'CANCELLING'])
 
+// 活动状态决定是否需要轮询、SSE 和“中止分析”操作；终态只展示已保存结果。
 const isActiveTask = computed(() => activeStatuses.has(currentTask.value?.status))
 const currentModeLabel = computed(() => modeTextMap[currentTask.value?.mode] || '深度分析')
+
+// 兼容后端历史上可能返回数组或 JSON 字符串的资料库名称字段，解析失败时只隐藏名称。
 const referenceLibraryNames = computed(() => {
   const raw = currentTask.value?.referenceLibraryNames
   if (Array.isArray(raw)) return raw
@@ -55,6 +65,7 @@ const referenceLibraryNames = computed(() => {
   }
 })
 
+// 切换结果页签后等待 DOM 更新，再让对应内容执行进场动画。
 watch(activeTab, async () => {
   await nextTick()
   if (containerRef.value) {
@@ -68,10 +79,12 @@ watch(activeTab, async () => {
   }
 })
 
+// 任务未完成前不允许停留在结果页签，避免用户看到尚未生成的空结果。
 watch(() => currentTask.value?.status, status => {
   if (status !== 'COMPLETED') activeTab.value = 0
 })
 
+// 仅在第一次拿到任务时触发整页揭示动画，后续轮询更新不重复播放。
 watch(currentTask, async (newVal, oldVal) => {
   if (!oldVal && newVal) {
     await nextTick()
@@ -82,8 +95,10 @@ watch(currentTask, async (newVal, oldVal) => {
   }
 }, { immediate: true })
 
+// 进入页面先恢复该文档最近一次任务，离开时由下方钩子清除所有后台监听。
 onMounted(loadLatestTask)
 
+// 路由复用同一个组件实例时，必须先清理旧任务的轮询、SSE 和重连计时器。
 watch(() => props.id, (newId, oldId) => {
   if (!newId || newId === oldId) return
   stopPolling()
@@ -97,11 +112,20 @@ watch(() => props.id, (newId, oldId) => {
 })
 
 onUnmounted(() => {
+  // 组件销毁后不再接受后台消息，避免旧 EventSource 修改新页面状态。
   stopPolling()
   closeSSE()
   if (reconnectTimer) clearTimeout(reconnectTimer)
 })
 
+/**
+ * 加载文档最近一次分析任务，并根据其状态恢复实时监控。
+ *
+ * `loadSequence` 用于丢弃路由快速切换时较早请求的返回值；活动任务恢复轮询和 SSE，
+ * 已结束任务只建立带最后事件 ID 的 SSE 连接，以便补齐结果页可能错过的公开过程记录。
+ *
+ * @returns {Promise<void>} 任务加载和监控初始化完成后返回。
+ */
 async function loadLatestTask() {
   const requestSequence = ++loadSequence
   loadingTask.value = true
@@ -126,6 +150,16 @@ async function loadLatestTask() {
   }
 }
 
+/**
+ * 为活动任务启动轮询和 SSE 实时监控。
+ *
+ * 每次重新开始监控都先停止旧定时器和连接；需要重置时同时清空上一任务的阶段与思考
+ * 文本，避免路由切换后把旧任务的公开依据拼接到新任务中。
+ *
+ * @param {string|number} taskId 分析任务 ID。
+ * @param {boolean} [resetStream=false] 是否清空已有流式展示状态。
+ * @returns {void} 监控由定时器和 EventSource 异步推进。
+ */
 function startMonitoring(taskId, resetStream = false) {
   stopPolling()
   if (resetStream) resetStreamState(true)
@@ -136,6 +170,14 @@ function startMonitoring(taskId, resetStream = false) {
   timer = setInterval(pollCurrentTask, 3000)
 }
 
+/**
+ * 定时获取任务快照，作为 SSE 之外的状态兜底。
+ *
+ * 服务端快照到达终态后立即停止轮询和 SSE，并把未结束的公开依据标记为中断；单次
+ * 轮询失败只显示提示，不清空已有进度，因为下一轮仍可能恢复连接。
+ *
+ * @returns {Promise<void>} 一轮状态同步完成后返回。
+ */
 async function pollCurrentTask() {
   if (!streamTaskId) return
   try {
@@ -154,12 +196,26 @@ async function pollCurrentTask() {
   }
 }
 
+/**
+ * 停止当前任务的状态轮询。
+ *
+ * @returns {void} 清除定时器并更新轮询标志。
+ */
 function stopPolling() {
   if (timer) clearInterval(timer)
   timer = null
   polling.value = false
 }
 
+/**
+ * 建立指定任务的 SSE 连接，并从最近一次事件 ID 之后继续接收消息。
+ *
+ * 每次连接前关闭旧连接；`lastEventId` 由浏览器事件和服务端查询参数共同支持断线
+ * 恢复，解析失败的消息被忽略，不应阻断后续合法事件。
+ *
+ * @param {string|number} taskId 分析任务 ID。
+ * @returns {void} 连接事件通过回调异步写入页面状态。
+ */
 function connectSSE(taskId) {
   closeSSE()
   const query = lastEventId ? `?lastEventId=${encodeURIComponent(lastEventId)}` : ''
@@ -185,6 +241,14 @@ function connectSSE(taskId) {
   }
 }
 
+/**
+ * 为活动任务安排指数退避的 SSE 重连。
+ *
+ * 同一时刻只允许一个重连计时器，等待时间从 1 秒逐步增加到 15 秒；任务进入终态
+ * 或组件离开后不再安排新连接。
+ *
+ * @returns {void} 创建必要的重连计时器。
+ */
 function scheduleSSEReconnect() {
   if (reconnectTimer || !streamTaskId || !isActiveTask.value) return
   reconnectTimer = setTimeout(() => {
@@ -194,6 +258,15 @@ function scheduleSSEReconnect() {
   }, reconnectDelay)
 }
 
+/**
+ * 合并一条 SSE 业务消息。
+ *
+ * 进度消息更新当前任务和阶段列表，thinking 消息按步骤追加公开依据，终态消息关闭
+ * SSE 并结束未完成条目。这里不把 SSE 当作最终权威状态，最终状态仍由轮询快照确认。
+ *
+ * @param {Object} message 后端流式协议解码后的消息对象。
+ * @returns {void} 根据消息类型更新响应式展示状态。
+ */
 function handleStreamMessage(message) {
   if (message.kind === 'progress') {
     if (currentTask.value) {
@@ -219,6 +292,11 @@ function handleStreamMessage(message) {
   }
 }
 
+/**
+ * 关闭当前 SSE 连接并释放浏览器资源。
+ *
+ * @returns {void} 没有活动连接时不执行任何操作。
+ */
 function closeSSE() {
   if (eventSource) {
     eventSource.close()
@@ -226,6 +304,12 @@ function closeSSE() {
   }
 }
 
+/**
+ * 重置任务流的阶段、公开依据、事件游标和展开状态。
+ *
+ * @param {boolean} expanded 是否在重置后展开分析过程面板。
+ * @returns {void} 清空当前任务的流式展示状态。
+ */
 function resetStreamState(expanded) {
   streamStages.value = []
   streamStep.value = ''
@@ -236,6 +320,14 @@ function resetStreamState(expanded) {
   analysisProcessExpanded.value = expanded
 }
 
+/**
+ * 请求服务端终止当前活动分析任务。
+ *
+ * 终止可能先返回 `CANCELLING` 再由后台转为终态，因此中止按钮在此期间保持锁定，
+ * 轮询和 SSE 继续运行以接收最终确认。
+ *
+ * @returns {Promise<void>} 终止请求完成后返回。
+ */
 async function handleCancel() {
   if (!currentTask.value || cancelling.value || !isActiveTask.value) return
   cancelling.value = true
@@ -256,6 +348,12 @@ async function handleCancel() {
   }
 }
 
+/**
+ * 安全解析结果字段，屏蔽空值、原始错误包装和非对象 JSON。
+ *
+ * @param {string|Object|null} value 后端保存的 JSON 字符串或已解析对象。
+ * @returns {Object|Array|null} 可供结果组件消费的对象/数组，无法解析时返回 null。
+ */
 function parseJson(value) {
   if (!value) return null
   if (typeof value === 'object') {
@@ -270,6 +368,13 @@ function parseJson(value) {
   }
 }
 
+/**
+ * 将后端进度文案归并到稳定的阶段键，便于同一阶段的多条进度消息覆盖更新。
+ *
+ * @param {string} summary 后端当前步骤文案。
+ * @param {number} progress 当前进度百分比。
+ * @returns {string} 阶段键。
+ */
 function processStageKey(summary, progress) {
   if (progress >= 100 || summary.includes('分析完成')) return 'completed'
   if (summary.includes('检索文档片段')) return 'document_retrieval'
@@ -280,6 +385,15 @@ function processStageKey(summary, progress) {
   return `other:${summary}`
 }
 
+/**
+ * 记录或更新分析阶段。
+ *
+ * 新阶段出现时先把前一阶段标记完成，再追加当前阶段；同一阶段的后续消息只刷新
+ * 文案和进度，防止 SSE 高频消息在界面上生成大量重复条目。
+ *
+ * @param {Object} message 包含 progress 和 currentStep 的进度消息。
+ * @returns {void} 更新阶段列表和当前阶段键。
+ */
 function recordProcessStage(message) {
   const progress = Math.max(0, Math.min(100, Number(message.progress) || 0))
   const summary = String(message.currentStep || '正在分析')
@@ -298,10 +412,24 @@ function recordProcessStage(message) {
   streamStep.value = key
 }
 
+/**
+ * 将已有阶段全部标记为完成，用于接收到任务终态时收束过程面板。
+ *
+ * @returns {void} 更新阶段完成标志。
+ */
 function markProcessStagesDone() {
   streamStages.value.forEach(stage => { stage.done = true })
 }
 
+/**
+ * 按分析步骤合并公开依据文本。
+ *
+ * 同一步骤的增量文本会追加到已有内容，`reset` 用于新一轮传输覆盖旧内容，`done`
+ * 用于结束该步骤；展开面板时在下一帧滚动到底部，保证最新依据可见。
+ *
+ * @param {Object} message 包含 step、text、reset 或 done 的思考消息。
+ * @returns {void} 更新公开依据列表和当前步骤。
+ */
 function recordThinking(message) {
   const step = String(message.step || 'analysis')
   let entry = thinkingEntries.value.find(item => item.step === step)
@@ -328,6 +456,12 @@ function recordThinking(message) {
   })
 }
 
+/**
+ * 收束所有尚未结束的公开依据条目。
+ *
+ * @param {boolean} interrupted 是否因失败或取消而中断。
+ * @returns {void} 更新每条依据的完成和中断标记。
+ */
 function finishThinkingEntries(interrupted) {
   thinkingEntries.value.forEach(entry => {
     if (!entry.done) {
@@ -337,6 +471,12 @@ function finishThinkingEntries(interrupted) {
   })
 }
 
+/**
+ * 将内部步骤键转换为管理员可读的公开依据标题。
+ *
+ * @param {string} step 后端步骤键。
+ * @returns {string} 中文步骤标题。
+ */
 function thinkingLabel(step) {
   const normalized = String(step)
   if (normalized.startsWith('argument_chain_map_')) {
@@ -352,11 +492,23 @@ function thinkingLabel(step) {
   return '分析依据'
 }
 
+/**
+ * 计算公开依据条目的展示状态。
+ *
+ * @param {Object} entry 公开依据条目。
+ * @returns {string} 已完成、已结束、进行中或等待中的状态文本。
+ */
 function thinkingStatus(entry) {
   if (entry.done) return entry.interrupted ? '已结束' : '已完成'
   return entry.step === thinkingStep.value ? '进行中' : '等待中'
 }
 
+/**
+ * 计算分析阶段的展示状态。
+ *
+ * @param {Object} stage 阶段条目。
+ * @returns {string} 已完成、进行中或等待中的状态文本。
+ */
 function stageStatus(stage) {
   if (stage.done) return '已完成'
   return stage.key === streamStep.value ? '进行中' : '等待中'

@@ -30,6 +30,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.function.Supplier;
 
+/**
+ * 单管理员会话认证、CSRF、退出和会话固定攻击防护配置。
+ */
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
@@ -50,6 +53,12 @@ public class SecurityConfig {
         this.adminPasswordHash = stripOptionalQuotes(adminPasswordHash);
     }
 
+    /**
+     * 去掉密码哈希配置可能存在的包裹引号。
+     *
+     * @param value 原始环境变量值
+     * @return 清理后的值
+     */
     private String stripOptionalQuotes(String value) {
         if (value == null || value.length() < 2) {
             return value;
@@ -166,6 +175,13 @@ public class SecurityConfig {
         private final CsrfTokenRequestHandler plain = new CsrfTokenRequestAttributeHandler();
         private final CsrfTokenRequestHandler xor = new XorCsrfTokenRequestAttributeHandler();
 
+        /**
+         * 为 SPA 写入可由前端读取的 CSRF Cookie，同时保留请求属性处理。
+         *
+         * @param request 当前请求
+         * @param response 当前响应
+         * @param csrfToken 延迟生成 CSRF Token 的供应器
+         */
         @Override
         public void handle(
                 HttpServletRequest request,
@@ -175,6 +191,13 @@ public class SecurityConfig {
             csrfToken.get();
         }
 
+        /**
+         * 优先读取前端 Header 中的明文 Token；缺失时使用 Spring 默认 XOR 值。
+         *
+         * @param request 当前请求
+         * @param csrfToken 当前 CSRF Token
+         * @return 请求携带的 CSRF Token 值
+         */
         @Override
         public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
             String headerValue = request.getHeader(csrfToken.getHeaderName());

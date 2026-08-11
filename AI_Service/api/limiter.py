@@ -1,3 +1,5 @@
+"""HTTP 接口限流器的共享实例。"""
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 

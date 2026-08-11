@@ -9,8 +9,17 @@ import jakarta.persistence.LockModeType;
 
 import java.util.Optional;
 
+/**
+ * 分析文档数据访问接口。
+ */
 public interface DocumentRepository extends JpaRepository<Document, String> {
 
+    /**
+     * 加悲观写锁查询文档，串行化删除、向量回写和分析启动。
+     *
+     * @param id 文档 ID
+     * @return 加锁后的文档
+     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from Document d where d.id = :id")
     Optional<Document> findByIdForUpdate(@Param("id") String id);

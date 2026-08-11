@@ -1,3 +1,5 @@
+"""OpenAI 兼容文本模型客户端工厂。"""
+
 from langchain_openai import ChatOpenAI
 
 from config.settings import settings

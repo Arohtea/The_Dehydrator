@@ -13,6 +13,12 @@ import org.springframework.web.client.RestTemplate;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Business Service 到 AI Service 的内部 HTTP 客户端。
+ *
+ * <p>模型配置从数据库设置快照转换为 Header，服务令牌单独通过
+ * `X-Service-Token` 传递；这里不读取前端输入的模型 Key，也不在日志中输出凭据。</p>
+ */
 @Component
 @RequiredArgsConstructor
 public class AiServiceClient {
@@ -25,6 +31,14 @@ public class AiServiceClient {
     @Value("${ai-service.service-token}")
     private String serviceToken;
 
+    /**
+     * AI Service 返回的向量归档和分类建议。
+     *
+     * @param docId 新参考文档的 AI 文档 ID
+     * @param folderName 模型推荐的文件夹名称
+     * @param categoryName 模型推荐的分类名称
+     * @param confidence 模型建议置信度
+     */
     public record ArchiveReferenceResult(
             String docId,
             String folderName,
@@ -65,6 +79,7 @@ public class AiServiceClient {
     public String uploadDocument(byte[] fileBytes, String filename,
                                  AiModelConfig vectorModel, Integer chunkSize, Integer chunkOverlap,
                                  String sourceType, String libraryId) {
+        // Multipart 请求携带完整向量配置和来源信息，AI Service 不依赖自身的模型回退配置。
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(fileBytes) {
             @Override
@@ -97,6 +112,7 @@ public class AiServiceClient {
      * @param aiDocId AI Service 文档 ID
      */
     public void deleteDocument(String aiDocId) {
+        // 删除接口只需要服务令牌和 AI 文档 ID；具体 point 范围由 AI Service 按 payload 清理。
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Service-Token", serviceToken);
         restTemplate.exchange(
@@ -125,6 +141,7 @@ public class AiServiceClient {
                                                           List<String> folderCandidates,
                                                           List<String> categoryCandidates,
                                                           AiModelConfig textModel) {
+        // 候选目录只影响模型建议，真正的目录创建和置信度阈值由归档服务决定。
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Service-Token", serviceToken);
@@ -152,6 +169,13 @@ public class AiServiceClient {
         );
     }
 
+    /**
+     * 把模型配置映射为 AI Service 约定的 Header 集合。
+     *
+     * @param headers 待写入的 HTTP Header
+     * @param prefix `X-Text` 或 `X-Embedding`
+     * @param config 模型配置，可为空
+     */
     private void setModelHeaders(HttpHeaders headers, String prefix, AiModelConfig config) {
         if (config == null) {
             return;
@@ -161,6 +185,12 @@ public class AiServiceClient {
         if (config.apiKey() != null) headers.set(prefix + "-Api-Key", config.apiKey());
     }
 
+    /**
+     * 将 HTTP JSON 中的数值转换为归档结果需要的 Double。
+     *
+     * @param value JSON 解析得到的候选值
+     * @return 数值的 Double 表示；非数值时返回 null
+     */
     private Double toDouble(Object value) {
         if (value instanceof Number number) {
             return number.doubleValue();

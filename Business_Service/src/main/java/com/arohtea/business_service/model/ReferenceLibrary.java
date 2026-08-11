@@ -11,6 +11,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 参考资料库目录实体；带系统 Key 的资料库由系统维护，不能按普通库删除。
+ */
 @Data
 @Entity
 @Table(name = "reference_libraries")
@@ -30,6 +33,9 @@ public class ReferenceLibrary {
 
     private LocalDateTime createdAt;
 
+    /**
+     * 在首次持久化时记录资料库创建时间。
+     */
     @PrePersist
     void prePersist() {
         createdAt = LocalDateTime.now();

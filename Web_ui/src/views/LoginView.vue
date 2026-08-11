@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 管理员登录页。
+ *
+ * 登录成功后优先回到路由守卫记录的站内地址；对重定向参数做站内路径限制，避免
+ * 把登录流程变成可利用的外部跳转入口。
+ */
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '@/api'
@@ -10,6 +16,14 @@ const password = ref('')
 const loading = ref(false)
 const error = ref('')
 
+/**
+ * 提交登录表单并处理登录后的安全重定向。
+ *
+ * 空表单和重复提交在客户端直接忽略，服务端返回的错误只展示可读消息，不在页面
+ * 状态中保留或输出密码等敏感字段。
+ *
+ * @returns {Promise<void>} 登录请求和成功后的路由替换完成后返回。
+ */
 async function submit() {
   if (loading.value || !username.value.trim() || !password.value) return
   loading.value = true

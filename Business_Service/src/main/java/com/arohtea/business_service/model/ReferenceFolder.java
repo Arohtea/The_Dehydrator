@@ -11,6 +11,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 资料库文件夹；同一资料库内名称唯一。
+ */
 @Data
 @Entity
 @Table(
@@ -27,6 +30,9 @@ public class ReferenceFolder {
     private String name;
     private LocalDateTime createdAt;
 
+    /**
+     * 在首次持久化时记录文件夹创建时间。
+     */
     @PrePersist
     void prePersist() {
         createdAt = LocalDateTime.now();

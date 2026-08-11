@@ -1,3 +1,5 @@
+"""OpenAI 兼容向量模型客户端及向量生成封装。"""
+
 from langchain_openai import OpenAIEmbeddings
 
 from config.settings import settings
@@ -17,6 +19,10 @@ def get_embeddings(config: AIModelConfig) -> OpenAIEmbeddings:
 
     Raises:
         ValueError: 未提供向量模型配置。
+
+    Notes:
+        客户端按模型、接口地址和 Key 组成的完整配置缓存；配置变化会得到新的
+        客户端，避免不同设置之间共享错误的模型连接。
     """
     if config is None:
         raise ValueError("向量模型配置不能为空")

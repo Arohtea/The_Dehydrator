@@ -1,3 +1,5 @@
+"""文档上传、删除和分析文档归档接口。"""
+
 import uuid
 import tempfile
 from pathlib import Path
@@ -20,6 +22,8 @@ ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt"}
 
 
 class ArchiveReferenceRequest(BaseModel):
+    """分析文档归档到参考资料库时的候选位置请求。"""
+
     libraryId: str = Field(min_length=1, max_length=100)
     filename: str = Field(min_length=1, max_length=255)
     folderCandidates: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
@@ -52,6 +56,14 @@ async def upload_document(
 
     Returns:
         文档 ID、文件名和解析统计。
+
+    Raises:
+        HTTPException: 文件格式、大小、分块参数、模型配置或解析结果不符合系统
+            约束时返回对应的 HTTP 错误。
+
+    Notes:
+        上传内容先写入临时文件再解析，函数退出时无论成功或失败都会删除临时
+        文件；向量写入使用本次请求显式传入的模型配置，避免读取其他任务配置。
     """
     filename = file.filename or "upload"
     if len(filename) > 255:
@@ -140,6 +152,10 @@ async def delete_document(request: Request, doc_id: str):
 
     Returns:
         删除完成状态。
+
+    Notes:
+        删除范围由 Qdrant 的 `doc_id` payload 决定，不依赖 PostgreSQL 中的文档
+        记录，因此该接口也可用于清理异步向量化失败后留下的向量。
     """
     delete_by_doc_id(doc_id)
     return {"ok": True}
@@ -161,6 +177,10 @@ async def archive_reference(
 
     Returns:
         新参考文档 ID 与分类建议。
+
+    Raises:
+        HTTPException: 文本模型配置无效、源文档向量不存在或归档过程失败时返回
+            404 或 422。
     """
     try:
         text_config = parse_header_model_config(request.headers, "X-Text", "文本模型")

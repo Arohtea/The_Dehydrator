@@ -24,6 +24,7 @@ public class AnalysisTaskStateService {
      */
     @Transactional
     public void markProcessing(String taskId) {
+        // 行锁让取消请求与派发状态迁移按数据库顺序执行，避免互相覆盖。
         taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
             if (task.getStatus() == TaskStatus.PENDING) {
                 task.setStatus(TaskStatus.PROCESSING);

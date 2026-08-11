@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 将 Redis Stream 转换为支持回放、断线续传和心跳的 SSE 接口。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/analysis")
@@ -80,6 +83,14 @@ public class StreamController {
         return emitter;
     }
 
+    /**
+     * 先回放历史事件，再持续读取新事件直到终态、连接关闭或超时。
+     *
+     * @param taskId 任务 ID
+     * @param startId 客户端最后确认的事件 ID
+     * @param emitter 当前 SSE 响应
+     * @param open 连接是否仍可写入的共享标记
+     */
     private void pump(String taskId, String startId, SseEmitter emitter, AtomicBoolean open) {
         String cursor = startId;
         try {
@@ -121,6 +132,14 @@ public class StreamController {
         }
     }
 
+    /**
+     * 将 Redis 记录转换为带事件 ID 的 SSE 消息。
+     *
+     * @param record Redis Stream 记录
+     * @param emitter 当前 SSE 响应
+     * @return 已发送的 Redis Stream 事件 ID
+     * @throws Exception SSE 写入失败
+     */
     private String sendRecord(
             MapRecord<String, Object, Object> record, SseEmitter emitter) throws Exception {
         String eventId = record.getId().getValue();
@@ -128,6 +147,14 @@ public class StreamController {
         return eventId;
     }
 
+    /**
+     * Redis 暂无事件时检查数据库终态并发送兜底事件。
+     *
+     * @param taskId 任务 ID
+     * @param emitter 当前 SSE 响应
+     * @return 已发送终态并关闭连接时返回 true
+     * @throws Exception SSE 写入失败
+     */
     private boolean sendTerminalFallback(String taskId, SseEmitter emitter) throws Exception {
         AnalysisTask task = taskRepository.findById(taskId).orElse(null);
         if (task == null || !TERMINAL_STATUSES.contains(task.getStatus())) {
@@ -142,6 +169,13 @@ public class StreamController {
         return true;
     }
 
+    /**
+     * 比较 Redis Stream 的时间戳-序列号 ID，判断事件是否位于游标之后。
+     *
+     * @param eventId 待判断事件 ID
+     * @param cursor 客户端游标
+     * @return 事件严格位于游标之后时返回 true；格式异常时使用字符串兜底比较
+     */
     private boolean isAfter(String eventId, String cursor) {
         if (cursor == null || cursor.isBlank() || "0-0".equals(cursor)) {
             return true;
@@ -160,6 +194,12 @@ public class StreamController {
         }
     }
 
+    /**
+     * 选择首个非空事件 ID，优先使用标准 Header 再使用查询参数。
+     *
+     * @param values 候选事件 ID
+     * @return 首个非空值；全部为空时返回 Redis Stream 起点
+     */
     private String firstNonBlank(String... values) {
         for (String value : values) {
             if (value != null && !value.isBlank()) {
@@ -169,6 +209,12 @@ public class StreamController {
         return "0-0";
     }
 
+    /**
+     * 校验客户端事件 ID 格式，拒绝非法游标从头开始回放。
+     *
+     * @param value 原始事件 ID
+     * @return 合法事件 ID 或 `0-0`
+     */
     private String normalizeEventId(String value) {
         return value.matches("\\d+-\\d+") ? value : "0-0";
     }

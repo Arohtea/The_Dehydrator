@@ -1,3 +1,5 @@
+"""文档文本切分策略。"""
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 

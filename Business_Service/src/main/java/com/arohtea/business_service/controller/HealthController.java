@@ -5,6 +5,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+/**
+ * 进程存活检查接口，不主动探测外部基础设施。
+ */
 @RestController
 public class HealthController {
 

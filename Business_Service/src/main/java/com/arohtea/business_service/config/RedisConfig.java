@@ -5,9 +5,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+/**
+ * 配置 SSE 读取和事务后消息派发使用的异步线程池。
+ */
 @Configuration
 public class RedisConfig {
 
+    /**
+     * 创建长连接 SSE 读取线程池。
+     *
+     * @return 专用异步执行器
+     */
     @Bean(name = "analysisStreamExecutor")
     public AsyncTaskExecutor analysisStreamExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -19,6 +27,11 @@ public class RedisConfig {
         return executor;
     }
 
+    /**
+     * 创建分析任务事务提交后派发线程池。
+     *
+     * @return 专用异步执行器
+     */
     @Bean(name = "analysisTaskDispatchExecutor")
     public AsyncTaskExecutor analysisTaskDispatchExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

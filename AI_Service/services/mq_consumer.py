@@ -1,3 +1,5 @@
+"""RabbitMQ 分析任务消费者及进度/结果消息发布。"""
+
 import json
 import asyncio
 import logging
@@ -28,6 +30,11 @@ def _safe_error(error: Exception | str, request_secrets: list[str] | None = None
 
 
 async def get_connection():
+    """创建带自动恢复能力的 RabbitMQ 异步连接。
+
+    Returns:
+        已连接的 `aio_pika` robust connection；调用方负责使用异步上下文关闭。
+    """
     username = quote(settings.rabbitmq_user, safe="")
     password = quote(settings.rabbitmq_password, safe="")
     return await aio_pika.connect_robust(
@@ -38,6 +45,11 @@ async def get_connection():
 
 
 def _get_progress_exchange():
+    """获取用于同步发布进度的 Pika 阻塞连接、channel 和 exchange 名称。
+
+    进度回调运行在分析线程中，使用独立的同步连接可以避免直接操作异步事件
+    循环；连接按进程缓存，并在断开后重新建立。
+    """
     global _progress_connection, _progress_channel, _progress_exchange
     import pika
 
@@ -54,6 +66,11 @@ def _get_progress_exchange():
 
 
 async def _publish_failed(task_id: str, error: str):
+    """向 Business Service 发布失败结果消息。
+
+    该辅助路径本身失败时只记录日志，因为原始分析消息已经不可重试；任务最终
+    状态仍可由 Business Service 的超时或轮询机制处理。
+    """
     try:
         conn = await get_connection()
         async with conn:
@@ -102,6 +119,12 @@ async def _publish_cancelled(task_id: str):
 
 
 async def _process_message(message: aio_pika.IncomingMessage):
+    """消费一条分析请求并发布进度、成功、失败或取消结果。
+
+    消息确认策略是：成功和已确认取消使用 `ack`，输入/运行失败使用
+    `nack(requeue=False)`，避免无效任务在队列中无限重试。耗时的同步分析放入
+    工作线程，避免阻塞 RabbitMQ 的异步事件循环。
+    """
     task_id = None
     request_secrets = []
     try:
@@ -128,7 +151,10 @@ async def _process_message(message: aio_pika.IncomingMessage):
         log.info("收到分析任务: %s", task_id)
 
         def _run_analysis():
+            """在线程中执行向量读取、论据提取和两个分析分支。"""
+
             def report(progress: int, step: str):
+                """把当前进度作为独立消息发布，失败时不影响主分析。"""
                 try:
                     ch, exchange = _get_progress_exchange()
                     ch.basic_publish(
@@ -144,6 +170,7 @@ async def _process_message(message: aio_pika.IncomingMessage):
                 except Exception:
                     log.warning("进度上报失败", exc_info=True)
 
+            # 只读取分析文档来源的向量，参考资料会在交叉验证阶段按资料库检索。
             report(5, "正在检索文档片段...")
             from services.vector_store import get_document_points
             points = get_document_points(doc_id, source_type="analysis_document")
@@ -165,6 +192,8 @@ async def _process_message(message: aio_pika.IncomingMessage):
 
             report(70, "正在检测逻辑漏洞，并进行本地交叉验证" if mode == "quick" else "正在检测逻辑漏洞，并进行联网交叉验证")
             from concurrent.futures import ThreadPoolExecutor
+            # 漏洞检测与交叉验证互不依赖；并发执行可以缩短总耗时，但每个分支内部
+            # 仍遵守各自的模型、联网和取消策略。
             with ThreadPoolExecutor(max_workers=settings.ai_analysis_branch_workers) as executor:
                 f_flaws = executor.submit(detect_logic_flaws, chain, task_id=task_id,
                                           text_config=text_config)
@@ -225,6 +254,11 @@ async def _process_message(message: aio_pika.IncomingMessage):
 
 
 async def start_consumer():
+    """声明分析请求队列并启动长期消费回调。
+
+    预取数量固定为 1，确保单个 AI Service 进程不会同时占用多个长任务；连接
+    恢复后由 `aio_pika` 重新声明 exchange、queue 和绑定关系。
+    """
     conn = await get_connection()
     ch = await conn.channel()
     await ch.set_qos(prefetch_count=1)

@@ -5,6 +5,11 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.Valid;
 
+/**
+ * 设置页提交的可选更新字段。
+ *
+ * <p>空字段表示保持现有值；模型三项由服务层进一步判断是全部为空还是完整配置。</p>
+ */
 public record SystemSettingsUpdate(
         @Valid ModelSettingsUpdate textModel,
         @Valid ModelSettingsUpdate vectorModel,
@@ -15,6 +20,13 @@ public record SystemSettingsUpdate(
 
     /**
      * 设置页提交的单个模型配置。
+     *
+     * @param model 模型名称
+     * @param url OpenAI 兼容接口根地址
+     * @param apiKey API Key，留空表示保持原值
+     */
+    /**
+     * 单个文本模型或向量模型的更新字段。
      *
      * @param model 模型名称
      * @param url OpenAI 兼容接口根地址

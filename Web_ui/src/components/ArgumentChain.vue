@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 论据链结果展示组件。
+ *
+ * 组件兼容后端不同版本的字段命名，并把每条论据的核心主张、证据、推理依据及关联
+ * 逻辑漏洞分层展示；它只负责呈现已经由分析服务生成的结果，不在前端重新推断结论。
+ */
 import { computed, onMounted, ref, nextTick } from 'vue'
 import { AlertTriangle } from 'lucide-vue-next'
 import gsap from 'gsap'
@@ -18,20 +24,40 @@ const flawSeverityMap = {
   low: { label: '低风险', cls: 'text-blue-700 bg-blue-50 border-blue-100' },
 }
 
+/**
+ * 读取论据主张，并兼容旧结果中直接使用字符串的条目。
+ *
+ * @param {string|Object} arg 论据条目。
+ * @param {number} index 论据在列表中的零基索引。
+ * @returns {string} 可展示的主张文本。
+ */
 function getClaim(arg, index) {
   if (typeof arg === 'string') return arg
   return arg?.claim || `第 ${index + 1} 条论据`
 }
 
+/**
+ * 将逻辑漏洞数量转换为自然语言提示。
+ *
+ * @param {Object} arg 论据条目。
+ * @returns {string} 漏洞数量提示。
+ */
 function flawLabel(arg) {
   const count = Number(arg?.logic_flaw_count) || 1
   return count > 1 ? `${count} 处逻辑漏洞` : '存在逻辑漏洞'
 }
 
+/**
+ * 将后端风险等级映射为徽标文本和颜色，并为未知值使用低风险样式兜底。
+ *
+ * @param {Object} arg 论据条目。
+ * @returns {{label: string, cls: string}} 风险展示配置。
+ */
 function flawSeverity(arg) {
   return flawSeverityMap[arg?.logic_flaw_severity] || flawSeverityMap.low
 }
 
+// 论据卡片只有在 v-for 完成渲染后才能绑定滚动触发动画。
 onMounted(async () => {
   await nextTick()
   if (containerRef.value) {

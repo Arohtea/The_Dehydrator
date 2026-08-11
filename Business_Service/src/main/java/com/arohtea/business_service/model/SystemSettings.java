@@ -3,6 +3,12 @@ package com.arohtea.business_service.model;
 import jakarta.persistence.*;
 import lombok.Data;
 
+/**
+ * 系统设置单例实体。
+ *
+ * <p>固定主键 `default` 确保只有一行；API Key 仅在服务内部使用，控制器响应会
+ * 返回配置状态而不会返回真实值。</p>
+ */
 @Data
 @Entity
 @Table(name = "system_settings")

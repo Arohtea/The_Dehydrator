@@ -1,3 +1,5 @@
+"""论据交叉验证及联网证据整理。"""
+
 import json
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +19,11 @@ MAX_WEB_CONTENT_CHARS = 2_000
 
 
 def _normalize_web_sources(results: list[dict]) -> list[dict]:
+    """清洗 Tavily 结果并限制返回给模型和前端的字段大小。
+
+    相同 URL 只保留一次，正文截断到固定长度，避免第三方页面内容无限扩大
+    LLM 上下文或 Redis/SSE 消息。
+    """
     sources = []
     seen_urls = set()
     for result in results[:5]:
@@ -37,6 +44,7 @@ def _normalize_web_sources(results: list[dict]) -> list[dict]:
 
 
 def _public_web_sources(results: list[dict]) -> list[dict]:
+    """提取只适合展示给用户的网页标题和链接。"""
     return [
         {"title": result.get("title", ""), "url": result.get("url", "")}
         for result in results[:5]
@@ -44,6 +52,7 @@ def _public_web_sources(results: list[dict]) -> list[dict]:
 
 
 def _format_web_evidence(results: list[dict]) -> str:
+    """把联网结果格式化为交叉验证提示词中的证据文本。"""
     evidence = []
     for result in results[:5]:
         title = str(result.get("title") or "未命名网页").strip()
@@ -63,6 +72,7 @@ def _format_web_evidence(results: list[dict]) -> str:
 
 
 def _tavily_error_message(error: Exception) -> str:
+    """将 Tavily 的异常类型映射为不泄露内部细节的用户提示。"""
     error_name = type(error).__name__
     if error_name in {"InvalidAPIKeyError", "MissingAPIKeyError", "KeylessUnsupportedEndpointError"}:
         return "Tavily API Key 无效或已失效"
@@ -76,6 +86,21 @@ def _tavily_error_message(error: Exception) -> str:
 
 
 def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> list[dict]:
+    """执行一次可取消的 Tavily 搜索。
+
+    Args:
+        query: 待搜索的论据文本。
+        task_id: 分析任务 ID，用于搜索前后检查取消信号。
+        tavily_api_key: 当前任务显式传入的 Tavily Key。
+
+    Returns:
+        清洗后的网页结果列表。
+
+    Raises:
+        ValueError: Key 缺失。
+        AnalysisCancelled: 任务在搜索前后被取消。
+        RuntimeError: Tavily 返回网络、权限、额度或参数错误。
+    """
     if not isinstance(tavily_api_key, str) or not tavily_api_key.strip():
         raise ValueError("未配置 Tavily API Key")
     if is_cancelled(task_id):
@@ -114,6 +139,26 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
                            mode: str = "deep",
                            doc_id: str | None = None,
                            reference_library_ids: list[str] | None = None) -> dict:
+    """为单条论据准备证据并调用模型完成交叉验证。
+
+    Args:
+        claim: 待核验论据。
+        task_id: 分析任务 ID。
+        idx: 论据在当前批次中的零基索引，用于流式步骤名称。
+        text_config: 文本模型配置。
+        vector_config: 参考资料向量检索配置。
+        tavily_api_key: 深度模式的联网搜索 Key。
+        mode: `quick` 跳过联网搜索，其他值按深度模式处理。
+        doc_id: 当前分析文档 ID，仅用于保留调用契约。
+        reference_library_ids: 允许检索的参考资料库 ID。
+
+    Returns:
+        经过结构校验并补齐证据摘要字段的单条结果。
+
+    Notes:
+        当前论文片段不会传给验证提示词，防止交叉验证把待验证材料当成自己的
+        证据；参考资料和联网结果只按用户选择的模式与资料库范围加入。
+    """
     quick_mode = mode == "quick"
     document_evidence_label = "模型自身知识判断要求"
     document_evidence = (
@@ -121,6 +166,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         "若参考资料或联网搜索提供了额外信息，可以一并纳入判断。"
     )
     local_evidence_summary_hint = "模型知识摘要"
+    # 参考资料检索严格按资料库 ID 过滤；没有选择资料库时不访问向量服务。
     reference_results = search_reference_library(
         claim,
         reference_library_ids or [],
@@ -128,6 +174,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         top_k=3,
     )
     reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
+    # 快速模式的契约是跳过联网搜索，而不是用空结果伪装成搜索已完成。
     web_results = [] if quick_mode else _web_search(claim, task_id, tavily_api_key)
     public_web_sources = _public_web_sources(web_results)
     web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _format_web_evidence(web_results)
@@ -201,6 +248,7 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
     Raises:
         ValueError: 深度分析未提供 Tavily API Key。
         RuntimeError: Tavily 搜索失败。
+        AnalysisCancelled: 任务在任一论据核验过程中被取消。
     """
     if mode != "quick" and (
             not isinstance(tavily_api_key, str) or not tavily_api_key.strip()):
@@ -221,6 +269,7 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
         raise ValueError("缺少数据库配置 mapWorkers")
     worker_count = max(1, min(map_workers, total))
 
+    # 每条论据独立检索和调用模型；results 使用原始索引回填，保证返回顺序稳定。
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(

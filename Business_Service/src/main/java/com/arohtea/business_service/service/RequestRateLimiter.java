@@ -7,6 +7,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 
+/**
+ * 为上传和分析启动分别维护进程内令牌桶限流器。
+ */
 @Component
 public class RequestRateLimiter {
 
@@ -46,6 +49,13 @@ public class RequestRateLimiter {
         return analysisBucket.tryConsume(1);
     }
 
+    /**
+     * 按固定容量和时间窗口创建贪心补充令牌桶。
+     *
+     * @param capacity 窗口容量
+     * @param windowSeconds 令牌补充窗口秒数
+     * @return 配置完成的令牌桶
+     */
     private Bucket createBucket(long capacity, long windowSeconds) {
         Bandwidth limit = Bandwidth.builder()
                 .capacity(capacity)

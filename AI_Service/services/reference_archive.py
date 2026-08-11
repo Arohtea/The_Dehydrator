@@ -1,3 +1,5 @@
+"""将分析文档向量复制为参考资料并生成归档建议。"""
+
 from prompts.reference_classification import REFERENCE_CLASSIFICATION_PROMPT
 from services import strip_markdown_json
 from services.llm import get_chat_model
@@ -7,17 +9,38 @@ from services.output_models import ReferenceClassificationResult, parse_and_vali
 
 
 def _preview_text(chunks: list[str], max_chunks: int = 6, max_chars: int = 5000) -> str:
+    """截取有限数量和长度的片段作为分类模型上下文。
+
+    截断可以控制归档分类的请求成本，同时保留文档开头最可能包含标题和主题
+    信息的部分；该预览不影响已经写入 Qdrant 的完整向量。
+    """
     joined = "\n\n".join(chunk for chunk in chunks[:max_chunks] if chunk)
     return joined[:max_chars] if joined else "无可用文档片段"
 
 
 def _format_candidates(items: list[str]) -> str:
+    """把候选文件夹或分类名称转换为提示词中的列表文本。"""
     return "\n".join(f"- {item}" for item in items) if items else "无"
 
 
 def _suggest_folder_and_category(filename: str, document_preview: str,
                                  folder_candidates: list[str], category_candidates: list[str],
                                  text_config: AIModelConfig) -> dict:
+    """调用文本模型生成归档位置建议并校验结果结构。
+
+    Args:
+        filename: 原始文件名。
+        document_preview: 用于分类的有限文档预览。
+        folder_candidates: 当前资料库已有文件夹名称。
+        category_candidates: 当前资料库已有分类名称。
+        text_config: 本次分类调用使用的模型配置。
+
+    Returns:
+        包含文件夹、分类、置信度和原因的普通字典。
+
+    Raises:
+        ValueError: 模型输出无法解析为 `ReferenceClassificationResult`。
+    """
     llm = get_chat_model(text_config, streaming=False)
     response = llm.invoke(REFERENCE_CLASSIFICATION_PROMPT.format(
         filename=filename,

@@ -31,6 +31,7 @@ public class AnalysisTaskDispatcher {
     @Async("analysisTaskDispatchExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void dispatch(AnalysisTaskCreatedEvent event) {
+        // 只有事务提交后才投递，保证 AI Service 收到消息时能查询到对应任务记录。
         stateService.markProcessing(event.taskId());
         try {
             rabbitTemplate.convertAndSend(analysisExchange, analysisRequestQueue, event.message());

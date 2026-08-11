@@ -7,6 +7,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
+/**
+ * 创建 MinIO 对象存储客户端和 Business Service 到 AI Service 的 HTTP 客户端。
+ */
 @Configuration
 public class MinioConfig {
 

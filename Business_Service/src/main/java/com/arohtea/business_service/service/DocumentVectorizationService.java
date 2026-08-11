@@ -22,6 +22,7 @@ public class DocumentVectorizationService {
      */
     @Transactional
     public Document complete(String documentId, String aiDocId) {
+        // 删除流程中的旧异步回调必须被忽略，不能把已经标记删除的文档重新变成可分析。
         Document current = documentRepository.findByIdForUpdate(documentId).orElse(null);
         if (current == null || current.isDeleting()) {
             return null;

@@ -22,6 +22,12 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 参考资料库、目录和参考文档的 HTTP 接口。
+ *
+ * <p>控制器统一把目录冲突映射为 409，把输入校验错误映射为 400，并在上传入口
+ * 使用共享限流器保护对象存储和向量化资源。</p>
+ */
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
@@ -30,6 +36,12 @@ public class ReferenceLibraryController {
     private final ReferenceLibraryService referenceLibraryService;
     private final RequestRateLimiter requestRateLimiter;
 
+    /**
+     * 创建参考资料库。
+     *
+     * @param body 包含 name 的请求体
+     * @return 新资料库或参数错误响应
+     */
     @PostMapping("/reference-libraries")
     public ResponseEntity<?> createLibrary(@RequestBody Map<String, String> body) {
         try {
@@ -40,11 +52,22 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 列出全部参考资料库。
+     *
+     * @return 资料库列表
+     */
     @GetMapping("/reference-libraries")
     public ResponseEntity<List<ReferenceLibrary>> listLibraries() {
         return ResponseEntity.ok(referenceLibraryService.listLibraries());
     }
 
+    /**
+     * 删除空的普通资料库。
+     *
+     * @param id 资料库 ID
+     * @return 删除结果；系统库或非空资料库返回 409
+     */
     @DeleteMapping("/reference-libraries/{id}")
     public ResponseEntity<?> deleteLibrary(@PathVariable("id") String id) {
         try {
@@ -55,6 +78,12 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 列出指定资料库中的参考文档。
+     *
+     * @param id 资料库 ID
+     * @return 文档列表；资料库不存在时返回 404
+     */
     @GetMapping("/reference-libraries/{id}/documents")
     public ResponseEntity<?> listDocuments(@PathVariable("id") String id) {
         if (referenceLibraryService.getLibrary(id) == null) {
@@ -63,6 +92,12 @@ public class ReferenceLibraryController {
         return ResponseEntity.ok(referenceLibraryService.listDocuments(id));
     }
 
+    /**
+     * 列出指定资料库中的文件夹。
+     *
+     * @param id 资料库 ID
+     * @return 文件夹列表；资料库不存在时返回 404
+     */
     @GetMapping("/reference-libraries/{id}/folders")
     public ResponseEntity<?> listFolders(@PathVariable("id") String id) {
         if (referenceLibraryService.getLibrary(id) == null) {
@@ -71,6 +106,13 @@ public class ReferenceLibraryController {
         return ResponseEntity.ok(referenceLibraryService.listFolders(id));
     }
 
+    /**
+     * 创建资料库文件夹。
+     *
+     * @param id 资料库 ID
+     * @param body 包含 name 的请求体
+     * @return 文件夹或参数错误响应
+     */
     @PostMapping("/reference-libraries/{id}/folders")
     public ResponseEntity<?> createFolder(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         try {
@@ -81,6 +123,13 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 重命名文件夹。
+     *
+     * @param id 文件夹 ID
+     * @param body 包含新 name 的请求体
+     * @return 更新后的文件夹、404 或重名错误响应
+     */
     @PutMapping("/reference-folders/{id}")
     public ResponseEntity<?> renameFolder(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         try {
@@ -94,6 +143,12 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 删除未被文档引用的文件夹。
+     *
+     * @param id 文件夹 ID
+     * @return 删除结果；仍被引用时返回 409
+     */
     @DeleteMapping("/reference-folders/{id}")
     public ResponseEntity<?> deleteFolder(@PathVariable("id") String id) {
         try {
@@ -104,6 +159,12 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 列出指定资料库中的分类。
+     *
+     * @param id 资料库 ID
+     * @return 分类列表；资料库不存在时返回 404
+     */
     @GetMapping("/reference-libraries/{id}/categories")
     public ResponseEntity<?> listCategories(@PathVariable("id") String id) {
         if (referenceLibraryService.getLibrary(id) == null) {
@@ -112,6 +173,13 @@ public class ReferenceLibraryController {
         return ResponseEntity.ok(referenceLibraryService.listCategories(id));
     }
 
+    /**
+     * 创建资料库分类。
+     *
+     * @param id 资料库 ID
+     * @param body 包含 name 的请求体
+     * @return 分类或参数错误响应
+     */
     @PostMapping("/reference-libraries/{id}/categories")
     public ResponseEntity<?> createCategory(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         try {
@@ -122,6 +190,13 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 重命名分类。
+     *
+     * @param id 分类 ID
+     * @param body 包含新 name 的请求体
+     * @return 更新后的分类、404 或重名错误响应
+     */
     @PutMapping("/reference-categories/{id}")
     public ResponseEntity<?> renameCategory(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         try {
@@ -135,6 +210,12 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 删除未被文档引用的分类。
+     *
+     * @param id 分类 ID
+     * @return 删除结果；仍被引用时返回 409
+     */
     @DeleteMapping("/reference-categories/{id}")
     public ResponseEntity<?> deleteCategory(@PathVariable("id") String id) {
         try {
@@ -145,6 +226,14 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 上传参考文档并启动异步向量化。
+     *
+     * @param id 资料库 ID
+     * @param file 上传文件
+     * @return 已保存的参考文档元数据；限流或参数错误时返回对应响应
+     * @throws Exception 对象存储或元数据保存失败
+     */
     @PostMapping("/reference-libraries/{id}/documents/upload")
     public ResponseEntity<?> uploadDocument(
             @PathVariable("id") String id,
@@ -160,6 +249,13 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 更新参考文档展示名称、文件夹和分类。
+     *
+     * @param id 参考文档 ID
+     * @param body 包含 displayName、folderId 和 categoryId 的请求体
+     * @return 更新后的文档、404 或目录校验错误响应
+     */
     @PutMapping("/reference-documents/{id}")
     public ResponseEntity<?> updateDocument(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         try {
@@ -178,6 +274,13 @@ public class ReferenceLibraryController {
         }
     }
 
+    /**
+     * 删除参考文档及其向量和对象；自动归档镜像必须从原始文档入口删除。
+     *
+     * @param id 参考文档 ID
+     * @return 删除成功时返回 204，镜像删除冲突时返回 409
+     * @throws Exception 外部资源删除失败
+     */
     @DeleteMapping("/reference-documents/{id}")
     public ResponseEntity<?> deleteDocument(@PathVariable("id") String id) throws Exception {
         try {

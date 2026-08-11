@@ -1,3 +1,5 @@
+"""论据链提取及漏洞结果回标服务。"""
+
 import re
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +22,10 @@ def annotate_logic_flaws(argument_chain: dict, logic_flaw_result: dict) -> dict:
 
     Returns:
         增加步骤风险标记后的论据链。原有论据文本不会被删除或改写。
+
+    Notes:
+        模型有时只返回 `location` 文本而没有结构化的 `step_numbers`，因此这里
+        同时支持两种格式，并以严重程度最高的漏洞作为步骤的汇总级别。
     """
     steps = argument_chain.get("argument_chain")
     flaws = logic_flaw_result.get("flaws") if isinstance(logic_flaw_result, dict) else None
@@ -74,17 +80,31 @@ def extract_argument_chain(chunks: list[str], text_config: AIModelConfig,
 
     Returns:
         结构化论据链。
+
+    Raises:
+        ValueError: 未提供并发配置，或模型输出无法通过结构校验。
+        AnalysisCancelled: 在任一流式模型调用期间发现任务已取消。
+
+    Notes:
+        MAP 阶段并发处理各片段，REDUCE 阶段再把片段结果合并；两阶段之间使用
+        `mapped` 的原始索引恢复文档顺序，避免线程完成顺序影响最终论据链。
     """
     total = len(chunks)
     mapped = [None] * total
     completed_count = 0
 
     def process_chunk(i, chunk):
+        """处理一个文档片段并保留其原始索引。
+
+        在线程池中完成单片段 LLM 调用；返回索引是为了让并发完成顺序不会改变
+        文档原始顺序。
+        """
         llm = get_chat_model(text_config)
         return i, stream_invoke(llm, MAP_PROMPT.format(text=chunk), task_id, f"argument_chain_map_{i}")
 
     if map_workers is None:
         raise ValueError("缺少数据库配置 mapWorkers")
+    # MAP 阶段只处理局部上下文，适合并发；进度从 10% 到 60%，为后续归并预留区间。
     with ThreadPoolExecutor(max_workers=map_workers) as executor:
         futures = {executor.submit(process_chunk, i, c): i for i, c in enumerate(chunks)}
         for future in as_completed(futures):
@@ -97,6 +117,7 @@ def extract_argument_chain(chunks: list[str], text_config: AIModelConfig,
                     f"正在从文档片段提取论据（{completed_count}/{total}）",
                 )
 
+    # REDUCE 阶段必须使用按原文顺序拼接的结果，否则模型可能误判论据之间的关系。
     combined = "\n".join(mapped)
     if on_progress:
         on_progress(65, "正在整理完整论据链")

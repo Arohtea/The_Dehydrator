@@ -4,6 +4,12 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
 
+/**
+ * 用户上传的分析文档元数据。
+ *
+ * <p>`aiDocId` 在后台向量化完成后异步回填，`deleting` 用于阻止删除期间新的
+ * 分析启动和旧回调复活文档。</p>
+ */
 @Data
 @Entity
 @Table(name = "documents")
@@ -26,6 +32,9 @@ public class Document {
 
     private LocalDateTime createdAt;
 
+    /**
+     * 在首次持久化时记录文档创建时间。
+     */
     @PrePersist
     void prePersist() {
         createdAt = LocalDateTime.now();

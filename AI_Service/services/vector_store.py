@@ -1,3 +1,5 @@
+"""Qdrant 向量集合、文档 payload 和相似度检索封装。"""
+
 import uuid
 
 from qdrant_client import QdrantClient, models
@@ -9,6 +11,14 @@ _client = None
 
 
 def get_client() -> QdrantClient:
+    """获取进程级共享 Qdrant 客户端。
+
+    Returns:
+        使用运行时基础设施配置初始化的 Qdrant 客户端。
+
+    Notes:
+        客户端延迟创建，避免仅执行模块导入或健康检查时立即建立外部连接。
+    """
     global _client
     if _client is None:
         _client = QdrantClient(
@@ -28,6 +38,10 @@ def ensure_collection(vector_size: int | None = None):
 
     Raises:
         ValueError: 集合不存在且无法确定维度，或现有集合与当前模型不兼容。
+
+    Notes:
+        集合维度一旦由模型确定就不能静默切换；发现维度、命名向量或集合类型
+        不兼容时必须提示重建，避免写入后产生不可检索的数据。
     """
     client = get_client()
     name = settings.qdrant_collection
@@ -65,10 +79,12 @@ def ensure_collection(vector_size: int | None = None):
 
 
 def _analysis_document_filter(doc_id: str | None = None) -> models.Filter:
+    """构造只匹配分析文档的 Qdrant 过滤器。"""
     return _document_filter("analysis_document", doc_id=doc_id)
 
 
 def _reference_document_filter(library_ids: list[str]) -> models.Filter:
+    """构造只匹配指定参考资料库的 Qdrant 过滤器。"""
     return models.Filter(must=[
         models.FieldCondition(
             key="source_type",
@@ -82,6 +98,7 @@ def _reference_document_filter(library_ids: list[str]) -> models.Filter:
 
 
 def _document_filter(source_type: str, doc_id: str | None = None, library_id: str | None = None) -> models.Filter:
+    """按来源类型及可选文档/资料库 ID 组合 Qdrant 条件。"""
     must = [
         models.FieldCondition(
             key="source_type",
@@ -123,6 +140,10 @@ def store_chunks(
 
     Raises:
         ValueError: 模型输出维度与现有集合不兼容。
+
+    Notes:
+        每个片段使用独立 UUID point ID，但通过 payload 中的 `doc_id` 形成逻辑
+        文档边界，删除和检索都依赖该字段。
     """
     vectors = embed_texts(chunks, config=vector_config)
     ensure_collection(len(vectors[0]) if vectors else None)
@@ -144,6 +165,15 @@ def store_chunks(
 
 
 def delete_by_doc_id(doc_id: str):
+    """删除指定逻辑文档对应的全部 Qdrant 向量点。
+
+    Args:
+        doc_id: 逻辑文档 ID，可能对应分析文档或参考文档。
+
+    Notes:
+        删除按 payload 过滤而不是按 point ID 进行，因此一次调用能清理该文档
+        的所有片段。
+    """
     client = get_client()
     client.delete(
         settings.qdrant_collection,
@@ -160,7 +190,19 @@ def scroll_all(
     with_vectors: bool = False,
     max_points: int | None = None,
 ):
-    """分页读取所有匹配点，并在达到上限时立即终止。"""
+    """分页读取所有匹配点，并在达到上限时立即终止。
+
+    Args:
+        scroll_filter: Qdrant payload 过滤条件。
+        with_vectors: 是否同时返回原始向量，归档复制时需要开启。
+        max_points: 最大允许读取点数，默认使用单文档系统上限。
+
+    Returns:
+        所有匹配的 Qdrant point 列表。
+
+    Raises:
+        ValueError: 读取点数超过系统上限。
+    """
     ensure_collection()
     client = get_client()
     points = []
@@ -187,6 +229,16 @@ def get_document_points(
     source_type: str = "analysis_document",
     with_vectors: bool = False,
 ):
+    """读取指定来源和文档 ID 的全部片段。
+
+    Args:
+        doc_id: 逻辑文档 ID。
+        source_type: `analysis_document` 或 `reference_document`。
+        with_vectors: 是否返回向量本身。
+
+    Returns:
+        按 Qdrant 分页结果合并的 point 列表。
+    """
     return scroll_all(
         _document_filter(source_type, doc_id=doc_id),
         with_vectors=with_vectors,
@@ -195,6 +247,22 @@ def get_document_points(
 
 
 def clone_analysis_document_to_reference(doc_id: str, library_id: str) -> tuple[str, list[str]]:
+    """复制分析文档向量并改写为参考资料 payload。
+
+    Args:
+        doc_id: 源分析文档 ID。
+        library_id: 目标参考资料库 ID。
+
+    Returns:
+        新生成的参考文档 ID，以及从 payload 中提取的文本列表。
+
+    Raises:
+        ValueError: 源分析文档没有可归档的向量。
+
+    Notes:
+        复制时生成新的逻辑文档 ID 和 point ID，并将 `source_type` 与 `library_id`
+        一并改写，保证后续参考资料检索不会命中原分析文档范围。
+    """
     ensure_collection()
     client = get_client()
     points = get_document_points(doc_id, source_type="analysis_document", with_vectors=True)

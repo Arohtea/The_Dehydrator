@@ -1,8 +1,19 @@
 <script setup>
+/**
+ * AI 运行参数管理页。
+ *
+ * 后端只返回密钥是否存在及脱敏预览，表单始终把 API Key 初始化为空；保存时留空
+ * 表示沿用服务端原值，从而允许管理员修改模型或处理参数而不重新暴露旧密钥。
+ */
 import { ref, onMounted, nextTick } from 'vue'
 import { getSettings, saveSettings } from '@/api'
 import gsap from 'gsap'
 
+/**
+ * 创建一个不带敏感值的模型配置表单骨架。
+ *
+ * @returns {{model: string, url: string, apiKey: string, apiKeyConfigured: boolean, apiKeyPreview: string|null}} 空模型配置。
+ */
 const emptyModel = () => ({
   model: '',
   url: '',
@@ -25,6 +36,15 @@ const saving = ref(false)
 const msg = ref('')
 const containerRef = ref(null)
 
+/**
+ * 将服务端脱敏设置转换为可编辑表单状态。
+ *
+ * 明文 API Key 永远不从响应写回表单；服务器返回的配置标记和预览只用于提示当前
+ * 是否已有密钥，数值参数则保留 `null` 以区分未设置和有效的零值。
+ *
+ * @param {Object} data 服务端返回的设置对象。
+ * @returns {void} 更新响应式表单，不返回敏感数据。
+ */
 function applySettings(data) {
   const textModel = data?.textModel || {}
   const vectorModel = data?.vectorModel || {}
@@ -46,6 +66,11 @@ function applySettings(data) {
   form.value.chunkOverlap = data?.chunkOverlap ?? null
 }
 
+/**
+ * 组装保存请求载荷，只发送表单中的新值和可调整参数。
+ *
+ * @returns {Object} 与后端设置更新接口匹配的请求对象。
+ */
 function settingsPayload() {
   return {
     textModel: {
@@ -65,6 +90,7 @@ function settingsPayload() {
   }
 }
 
+// 首次加载设置和页面动画相互独立；设置读取失败时仍保留可编辑的空表单。
 onMounted(async () => {
   try {
     const { data } = await getSettings()
@@ -81,6 +107,11 @@ onMounted(async () => {
   }
 })
 
+/**
+ * 保存设置后重新读取脱敏结果，使预览和“已配置”状态与服务端最终值一致。
+ *
+ * @returns {Promise<void>} 保存及回读流程完成后返回。
+ */
 async function onSave() {
   saving.value = true
   msg.value = ''

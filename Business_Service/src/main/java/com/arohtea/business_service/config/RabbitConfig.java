@@ -5,6 +5,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * 声明分析请求、结果和进度共用的 RabbitMQ 交换机、队列和路由绑定。
+ */
 @Configuration
 public class RabbitConfig {
 

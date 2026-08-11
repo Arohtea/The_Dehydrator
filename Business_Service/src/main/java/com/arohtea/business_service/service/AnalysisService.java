@@ -25,6 +25,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+/**
+ * 分析任务的创建、取消、超时清理和删除协同服务。
+ *
+ * <p>任务状态与文档删除状态分别保存在数据库和 Redis 中，数据库行锁负责
+ * 串行化竞争请求，Redis 取消键负责把停止信号传递给 AI Service。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -55,6 +61,12 @@ public class AnalysisService {
     @Value("${analysis.cancel-wait-ms:90000}")
     private long cancelWaitMs;
 
+    /**
+     * 将外部模式值收敛到系统支持的两个模式。
+     *
+     * @param mode 请求传入的模式，可能为空或大小写不一致
+     * @return `quick` 或 `deep`；除 quick 外的值统一按 deep 处理
+     */
     private String normalizeMode(String mode) {
         return "quick".equalsIgnoreCase(mode) ? "quick" : "deep";
     }
@@ -83,6 +95,7 @@ public class AnalysisService {
             throw new IllegalStateException("文档正在向量化，请稍后再试");
         }
 
+        // 文档行锁和活动任务检查共同保证同一文档不会并发创建多个分析任务。
         List<AnalysisTask> documentTasks = taskRepository.findByDocumentIdAndStatusIn(
                 documentId, ACTIVE_STATUSES);
         if (!documentTasks.isEmpty()) {
@@ -104,6 +117,7 @@ public class AnalysisService {
         List<String> normalizedLibraryIds = normalizeReferenceLibraryIds(referenceLibraryIds);
         List<String> referenceLibraryNames = resolveReferenceLibraryNames(normalizedLibraryIds);
 
+        // 把资料库名称保存为快照，避免资料库重命名后历史任务结果失去原始语义。
         AnalysisTask task = new AnalysisTask();
         task.setDocumentId(documentId);
         task.setMode(normalizedMode);
@@ -120,10 +134,22 @@ public class AnalysisService {
         return task;
     }
 
+    /**
+     * 按任务 ID 查询当前状态和已持久化结果。
+     *
+     * @param taskId 分析任务 ID
+     * @return 任务实体；不存在时返回 null
+     */
     public AnalysisTask getTask(String taskId) {
         return taskRepository.findById(taskId).orElse(null);
     }
 
+    /**
+     * 查询文档的全部历史任务并按创建时间升序返回。
+     *
+     * @param documentId 业务文档 ID
+     * @return 该文档的历史分析任务
+     */
     public List<AnalysisTask> getByDocumentId(String documentId) {
         return taskRepository.findByDocumentIdOrderByCreatedAtAsc(documentId);
     }
@@ -161,6 +187,7 @@ public class AnalysisService {
         }
         document.setDeleting(true);
         documentRepository.save(document);
+        // 删除流程只标记文档并发出取消信号，真正删除要等所有活动任务离开活动态。
         taskRepository.findByDocumentIdAndStatusInForUpdate(documentId, ACTIVE_STATUSES)
                 .forEach(task -> {
                     requestCancellation(task);
@@ -174,6 +201,13 @@ public class AnalysisService {
      *
      * @param documentId 文档 ID
      * @return 在等待上限内所有任务都已离开活动状态时返回 true
+     */
+    /**
+     * 在有限等待窗口内轮询文档活动任务是否全部收口。
+     *
+     * @param documentId 文档 ID
+     * @return 在截止时间前活动任务为空时返回 true；线程被中断或仍有活动任务
+     *         时返回 false
      */
     public boolean awaitCancellation(String documentId) {
         long deadline = System.nanoTime() + Duration.ofMillis(cancelWaitMs).toNanos();
@@ -212,6 +246,12 @@ public class AnalysisService {
      */
     @Scheduled(fixedRateString = "${analysis.task-cleanup-interval-ms}")
     @Transactional
+    /**
+     * 将超过超时阈值的 PENDING/PROCESSING 任务转为 CANCELLING。
+     *
+     * 超时任务仍需等待 AI Service 确认，不能直接写成 CANCELLED，否则可能把
+     * 仍在运行的外部模型调用误认为已经停止。
+     */
     public void cleanupTimedOutTasks() {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(taskTimeoutMinutes);
         List<AnalysisTask> stale = taskRepository.findByStatusInAndCreatedAtBefore(RUNNING_STATUSES, threshold);
@@ -231,6 +271,11 @@ public class AnalysisService {
         }
     }
 
+    /**
+     * 写入取消信号并把可取消状态迁移到 CANCELLING。
+     *
+     * @param task 已在当前事务中读取的任务实体
+     */
     private void requestCancellation(AnalysisTask task) {
         requestCancellationSignal(task.getId());
         if (task.getStatus() == TaskStatus.PENDING || task.getStatus() == TaskStatus.PROCESSING) {
@@ -239,11 +284,28 @@ public class AnalysisService {
         }
     }
 
+    /**
+     * 写入带 TTL 的协作式取消键，供 AI Service 在流式调用中定期读取。
+     *
+     * @param taskId 分析任务 ID
+     */
     private void requestCancellationSignal(String taskId) {
         redisTemplate.opsForValue().set(
                 cancelPrefix + taskId, "1", Duration.ofMinutes(cancelTtlMinutes));
     }
 
+    /**
+     * 组装 RabbitMQ 分析请求的跨服务 JSON 消息。
+     *
+     * @param task 任务实体
+     * @param document 业务文档实体
+     * @param referenceLibraryIds 清洗后的参考资料库 ID
+     * @param textModel 文本模型配置快照
+     * @param vectorModel 向量模型配置快照
+     * @param settings 上传/创建任务时读取的系统设置快照
+     * @return 可直接发送给 AI Service 的 JSON 字符串
+     * @throws IllegalStateException 配置无法序列化时抛出
+     */
     private String buildRequestMessage(
             AnalysisTask task,
             Document document,
@@ -273,6 +335,12 @@ public class AnalysisService {
         }
     }
 
+    /**
+     * 清洗资料库 ID，去掉空值、首尾空白和重复项。
+     *
+     * @param referenceLibraryIds 原始请求列表
+     * @return 稳定顺序的去重 ID 列表
+     */
     private List<String> normalizeReferenceLibraryIds(List<String> referenceLibraryIds) {
         if (referenceLibraryIds == null || referenceLibraryIds.isEmpty()) {
             return List.of();
@@ -285,6 +353,13 @@ public class AnalysisService {
                 .toList();
     }
 
+    /**
+     * 按 ID 查询资料库名称并验证所有 ID 都真实存在。
+     *
+     * @param referenceLibraryIds 已清洗的资料库 ID
+     * @return 与输入 ID 顺序一致的名称快照
+     * @throws IllegalArgumentException 任一资料库不存在
+     */
     private List<String> resolveReferenceLibraryNames(List<String> referenceLibraryIds) {
         if (referenceLibraryIds.isEmpty()) {
             return List.of();
@@ -303,6 +378,13 @@ public class AnalysisService {
                 .toList();
     }
 
+    /**
+     * 把列表持久化为实体字段使用的 JSON 文本。
+     *
+     * @param values 待序列化列表
+     * @return JSON 数组文本
+     * @throws IllegalStateException 序列化失败
+     */
     private String writeJsonList(List<String> values) {
         try {
             return objectMapper.writeValueAsString(values == null ? List.of() : values);

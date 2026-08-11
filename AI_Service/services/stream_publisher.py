@@ -1,3 +1,5 @@
+"""LLM 流式调用、公开分析依据发布和传输层重试。"""
+
 import json
 import logging
 import time
@@ -19,6 +21,7 @@ STREAM_MAX_ATTEMPTS = 3
 
 
 def _get_redis():
+    """获取用于取消检查和分析事件流的共享 Redis 客户端。"""
     global _redis
     if _redis is None:
         _redis = redis.Redis(
@@ -31,10 +34,21 @@ def _get_redis():
 
 
 class AnalysisCancelled(Exception):
+    """表示分析任务已收到取消信号，应停止当前模型调用。"""
+
     pass
 
 
 def is_cancelled(task_id: str) -> bool:
+    """检查任务取消标记。
+
+    Args:
+        task_id: 分析任务 ID。
+
+    Returns:
+        Redis 中存在取消 Key 时返回 `True`；Redis 暂时不可用时返回 `False`，
+        由任务结果和 Business Service 轮询继续兜底。
+    """
     try:
         return _get_redis().exists(f"{settings.redis_cancel_prefix}{task_id}") == 1
     except redis.RedisError:
@@ -43,6 +57,11 @@ def is_cancelled(task_id: str) -> bool:
 
 
 def _publish_event(task_id: str, event: dict):
+    """把结构化事件写入任务专属 Redis Stream。
+
+    Redis Stream 写入失败只记录日志，不中断 AI 分析；最终结果仍通过 RabbitMQ
+    返回，避免实时展示通道故障扩大为任务失败。
+    """
     try:
         client = _get_redis()
         key = f"{settings.redis_stream_prefix}{task_id}"
@@ -59,6 +78,11 @@ def _publish_event(task_id: str, event: dict):
 
 def _publish_thinking(task_id: str, step: str, text: str = "", done: bool = False,
                      reset: bool = False):
+    """发布面向用户的公开分析依据事件。
+
+    `reset` 用于流式传输中断重试时通知前端清除上一次尝试的半截内容，防止同一
+    分析步骤出现重复文本。
+    """
     event = {
         "kind": "thinking",
         "step": step,
@@ -83,6 +107,11 @@ class _PublicReasoningParser:
 
     @staticmethod
     def _retain_marker_suffix(value: str, marker: str) -> str:
+        """保留可能是协议标记前缀的尾部文本。
+
+        LLM 的单个 chunk 可能把 `<public_reasoning>` 等标记拆开；保留最长匹配
+        后缀可以在下一 chunk 到来时继续识别，而不会提前把标记内容发布给用户。
+        """
         max_length = min(len(value), len(marker) - 1)
         for length in range(max_length, 0, -1):
             if value.endswith(marker[:length]):
@@ -90,6 +119,17 @@ class _PublicReasoningParser:
         return ""
 
     def feed(self, text: str, on_reasoning_text, on_reasoning_done):
+        """消费一个流式文本片段并推进公开协议状态机。
+
+        Args:
+            text: 当前收到的模型文本片段。
+            on_reasoning_text: 收到安全的公开依据文本时的回调。
+            on_reasoning_done: 识别到公开依据结束标记时的回调。
+
+        Notes:
+            状态机只发布 `<public_reasoning>` 内容，把 `<result>` 内容暂存到最终
+            返回值；未完整识别协议时由 `output` 回退为原始模型输出。
+        """
         self._pending += text
         while True:
             if self._state == "search_reasoning":
@@ -147,6 +187,7 @@ class _PublicReasoningParser:
             return
 
     def output(self, raw_text: str) -> str:
+        """返回协议解析后的结果内容或旧格式的原始输出。"""
         if self.reasoning_closed and self.result_closed:
             return "".join(self._result_parts)
         return raw_text
@@ -182,6 +223,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
     attempt_state = {"thinking_emitted": False}
 
     def invoke_once():
+        """执行一次完整流式请求，并在传输中断时交给外层重试装饰器处理。"""
         attempt_state["thinking_emitted"] = False
         if is_cancelled(task_id):
             raise AnalysisCancelled(task_id)
@@ -196,6 +238,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
         last_flush_at = time.monotonic()
 
         def flush_thinking():
+            """将缓存的公开依据批量写入 Redis，控制写入频率。"""
             nonlocal thinking_buffer, buffered_chars, last_flush_at
             if thinking_buffer:
                 attempt_state["thinking_emitted"] = True
@@ -205,6 +248,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
             last_flush_at = time.monotonic()
 
         def queue_thinking(text: str):
+            """截断并缓存公开依据，在达到字符或时间阈值后刷新。"""
             nonlocal buffered_chars, reasoning_chars
             if not text or reasoning_chars >= MAX_PUBLIC_REASONING_CHARS:
                 return
@@ -220,6 +264,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
                 flush_thinking()
 
         def finish_thinking():
+            """发送当前步骤的公开依据终止事件，且确保只发送一次。"""
             nonlocal thinking_done
             if not parser.reasoning_started or thinking_done:
                 return
@@ -244,6 +289,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
         return parser.output("".join(raw_parts))
 
     def before_retry(retry_state):
+        """在传输层重试前清理前端可见的半截依据并记录尝试信息。"""
         error = retry_state.outcome.exception() if retry_state.outcome else None
         if is_cancelled(task_id):
             raise AnalysisCancelled(task_id)
@@ -265,6 +311,7 @@ def stream_invoke(llm, prompt: str, task_id: str, step: str) -> str:
         reraise=True,
     )
     def invoke_with_retry():
+        """在限定次数内重试可恢复的 HTTP 传输异常。"""
         return invoke_once()
 
     return invoke_with_retry()
