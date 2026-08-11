@@ -13,6 +13,9 @@ import java.util.Map;
 
 /**
  * 管理员设置查询与保存接口，所有响应都对模型 Key 和 Tavily Key 做脱敏处理。
+ *
+ * <p>前端可以看到模型名称、地址和“是否已配置”，但永远拿不到真实 Secret；提交
+ * 掩码值也不会覆盖数据库中的旧 Key，实际的部分更新和完整性校验由服务层负责。</p>
  */
 @RestController
 @RequestMapping("/api/settings")
@@ -40,6 +43,7 @@ public class SettingsController {
     @PutMapping
     public ResponseEntity<?> save(@Valid @RequestBody SystemSettingsUpdate input) {
         try {
+            // 保存服务会合并非空字段并校验完整配置，响应再次转成脱敏视图。
             return ResponseEntity.ok(toResponse(settingsService.save(input)));
         } catch (IllegalArgumentException exception) {
             return ResponseEntity.unprocessableEntity()
@@ -54,10 +58,12 @@ public class SettingsController {
      * @return 不包含真实 Secret 的响应结构
      */
     private Map<String, Object> toResponse(SystemSettings s) {
+        // 使用稳定字段结构，前端无需接触 SystemSettings 实体中的真实 Key。
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("textModel", modelResponse(s.getTextModelName(), s.getTextModelUrl(), s.getTextModelApiKey()));
         r.put("vectorModel", modelResponse(s.getVectorModelName(), s.getVectorModelUrl(), s.getVectorModelApiKey()));
         String tavilyKey = s.getTavilyApiKey();
+        // 只返回配置状态和固定掩码，不根据 Key 长度或内容生成预览。
         r.put("tavilyApiKeyConfigured", tavilyKey != null && !tavilyKey.isBlank());
         r.put("tavilyApiKeyPreview", maskedPreview(tavilyKey));
         r.put("mapWorkers", s.getMapWorkers());

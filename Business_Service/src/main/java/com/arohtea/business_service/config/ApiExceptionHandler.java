@@ -13,6 +13,10 @@ import java.util.Map;
 
 /**
  * 将常见参数、上传和业务冲突异常统一转换为前端约定的 HTTP 错误结构。
+ *
+ * <p>控制器和服务层只抛出有业务含义的异常，这里负责把 Java 异常翻译成前端统一
+ * 的 {@code {"error":"..."}} 结构。状态码区分参数错误、资源过大和业务冲突，
+ * 让前端知道是修改请求、重试请求还是调整文件大小。</p>
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -25,6 +29,7 @@ public class ApiExceptionHandler {
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> handleValidation(MethodArgumentNotValidException exception) {
+        // 只返回第一个字段错误和字段名，不把 Spring 内部校验对象直接暴露给客户端。
         String message = exception.getBindingResult().getFieldErrors().stream()
                 .findFirst()
                 .map(error -> error.getField() + " 参数无效")
@@ -40,6 +45,7 @@ public class ApiExceptionHandler {
      */
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, String>> handleUploadTooLarge() {
+        // 413 表示请求本身过大，调用方应缩小文件，而不是重复原请求。
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(Map.of("error", "文件或请求体超过上传限制"));
     }
@@ -52,6 +58,7 @@ public class ApiExceptionHandler {
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException exception) {
+        // 422 表示请求格式能解析，但业务值或配置不能执行。
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(Map.of("error", exception.getMessage() == null ? "请求参数无效" : exception.getMessage()));
     }
@@ -64,6 +71,7 @@ public class ApiExceptionHandler {
      */
     @ExceptionHandler(AnalysisConflictException.class)
     public ResponseEntity<Map<String, String>> handleAnalysisConflict(AnalysisConflictException exception) {
+        // 409 表示资源当前状态与本次操作冲突，通常需要等待或先完成另一项操作。
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", exception.getMessage()));
     }

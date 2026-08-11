@@ -6,7 +6,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 使用文档行锁提交异步向量化结果，避免删除流程中的旧回写复活文档。 */
+/**
+ * 使用文档行锁提交异步向量化结果，避免删除流程中的旧回写复活文档。
+ *
+ * <p>向量化在后台线程执行，完成时间可能晚于用户删除文档的时间。这个小服务把
+ * 回写集中在事务和行锁中，并把“文档已不存在/正在删除”转换成调用方可识别的空结果，
+ * 让上层负责回收已经在 AI Service 创建的向量。</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class DocumentVectorizationService {
@@ -15,6 +21,10 @@ public class DocumentVectorizationService {
 
     /**
      * 在删除状态检查通过后回写 AI 文档 ID。
+     *
+     * <p>只有文档仍存在且未标记删除，才把 AI Service 返回的 ID 写回数据库。返回
+     * {@code null} 并不代表向量化失败，而是表示远程工作已经落后于删除流程；调用方
+     * 必须把这时刚创建的 AI 文档清理掉。</p>
      *
      * @param documentId 业务文档 ID
      * @param aiDocId AI Service 文档 ID
@@ -27,6 +37,7 @@ public class DocumentVectorizationService {
         if (current == null || current.isDeleting()) {
             return null;
         }
+        // 行锁保护下写入向量 ID；从这一刻开始，分析任务才知道文档已经具备检索能力。
         current.setAiDocId(aiDocId);
         return documentRepository.save(current);
     }

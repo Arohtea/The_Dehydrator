@@ -45,7 +45,9 @@ def _get_chunks(doc_id: str) -> list[str]:
         通过 `source_type=analysis_document` 限定数据来源，避免把参考资料
         向量误当作当前论文内容参与论据提取。
     """
+    # 只读取当前上传的分析文档，不能把参考资料库中的相似片段混进论文论据。
     points = get_document_points(doc_id, source_type="analysis_document")
+    # Qdrant payload 可能缺少 text 或为空；过滤后再交给模型，避免生成无意义的输入。
     return [
         point.payload["text"]
         for point in points
@@ -72,13 +74,16 @@ async def argument_chain(
         HTTPException: 文档不存在、模型 Header 无效或文档没有可分析内容时返回
             对应的 HTTP 错误。
     """
+    # 先从向量库取回原文片段；没有片段时直接返回 404，不浪费模型调用。
     chunks = _get_chunks(req.doc_id)
     if not chunks:
         raise HTTPException(404, "未找到该文档的内容")
     try:
+        # 文本模型配置由 Business Service 随本次分析传入，保证任务使用用户当前选择。
         text_config = parse_header_model_config(request.headers, "X-Text", "文本模型")
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
+    # 论据链服务内部会执行 MAP 并发提取和 REDUCE 汇总。
     result = extract_argument_chain(
         chunks,
         text_config=text_config,
@@ -106,10 +111,12 @@ async def logic_flaws(
         HTTPException: 文档不存在、模型 Header 无效或文档没有可分析内容时返回
             对应的 HTTP 错误。
     """
+    # 逻辑漏洞依赖完整论据链，因此先复用同样的文档读取和空文档检查。
     chunks = _get_chunks(req.doc_id)
     if not chunks:
         raise HTTPException(404, "未找到该文档的内容")
     try:
+        # 提取论据链和检测漏洞必须使用同一份文本模型配置，结果才具有可比性。
         text_config = parse_header_model_config(request.headers, "X-Text", "文本模型")
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
@@ -118,6 +125,7 @@ async def logic_flaws(
         text_config=text_config,
         map_workers=x_map_workers,
     )
+    # 第二步在论据链基础上定位漏洞；不重新读取原文，保证漏洞位置对应同一批步骤。
     flaws = detect_logic_flaws(chain, text_config=text_config)
     return {"doc_id": req.doc_id, "logic_flaws": flaws}
 
@@ -141,17 +149,22 @@ async def cross_validation(
         HTTPException: 文档不存在、模型配置无效，或深度模式缺少 Tavily API Key
             时返回对应的 HTTP 错误。
     """
+    # 交叉验证同样以当前文档为入口，但后续还会读取参考资料并按模式决定是否联网。
     chunks = _get_chunks(req.doc_id)
     if not chunks:
         raise HTTPException(404, "未找到该文档的内容")
     try:
+        # 文本模型负责最终判断，向量模型负责参考资料相似度检索，两者配置必须分别解析。
         text_config = parse_header_model_config(request.headers, "X-Text", "文本模型")
         vector_config = parse_header_model_config(request.headers, "X-Embedding", "向量模型")
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
+    # Tavily Key 只从当前请求读取，避免把用户的联网凭证落到 AI Service 环境变量中。
     tavily_api_key = request.headers.get("X-Tavily-Api-Key")
     if req.mode == "deep" and not tavily_api_key:
+        # 深度模式的业务契约包含联网证据；缺 Key 时明确拒绝，不静默降级成快速模式。
         raise HTTPException(422, "深度交叉验证需要通过 X-Tavily-Api-Key 提供 Tavily API Key")
+    # 先提取论据，再由交叉验证服务为每条论据准备本地、参考资料和联网证据。
     chain = extract_argument_chain(
         chunks,
         text_config=text_config,

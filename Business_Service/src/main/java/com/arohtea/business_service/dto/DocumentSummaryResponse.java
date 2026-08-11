@@ -8,6 +8,9 @@ import java.time.LocalDateTime;
 /**
  * 文档列表使用的轻量摘要，包含向量化和最新分析任务状态。
  *
+ * <p>列表不返回全部分析 JSON，只返回用户决定下一步操作所需的状态：向量是否就绪、
+ * 是否正在删除、最新任务的进度和步骤。这样列表页面无需下载大段分析结果。</p>
+ *
  * @param id 文档 ID
  * @param filename 原始文件名
  * @param minioPath MinIO 对象路径
@@ -45,8 +48,10 @@ public record DocumentSummaryResponse(
      * @return 前端文档列表使用的摘要
      */
     public static DocumentSummaryResponse from(Document document, AnalysisTask task) {
+        // AI 文档 ID 是向量化完成的唯一标志；没有它时前端必须继续等待。
         String vectorStatus = document.getAiDocId() == null || document.getAiDocId().isBlank()
                 ? "PROCESSING" : "READY";
+        // 文档可能还没有分析任务，所以任务相关字段需要输出可识别的空值/零进度。
         return new DocumentSummaryResponse(
                 document.getId(), document.getFilename(), document.getMinioPath(), document.getFileSize(),
                 document.getAiDocId(), document.getCreatedAt(),

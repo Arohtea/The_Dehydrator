@@ -24,15 +24,18 @@ def _normalize_web_sources(results: list[dict]) -> list[dict]:
     相同 URL 只保留一次，正文截断到固定长度，避免第三方页面内容无限扩大
     LLM 上下文或 Redis/SSE 消息。
     """
+    # 只保留少量高相关结果；联网内容会进入模型上下文和 Redis/SSE，必须有明确上限。
     sources = []
     seen_urls = set()
     for result in results[:5]:
         title = str(result.get("title") or "未命名网页").strip()
         url = str(result.get("url") or "").strip()
         if url and url in seen_urls:
+            # 同一个页面可能被搜索接口以不同结果重复返回，展示和提示词中只保留一次。
             continue
         if url:
             seen_urls.add(url)
+        # 正文只保留摘要长度，相关度保留数值便于模型判断证据优先级。
         score = result.get("score")
         sources.append({
             "title": title,
@@ -45,6 +48,7 @@ def _normalize_web_sources(results: list[dict]) -> list[dict]:
 
 def _public_web_sources(results: list[dict]) -> list[dict]:
     """提取只适合展示给用户的网页标题和链接。"""
+    # 前端只需要可点击的来源信息，避免把搜索正文或内部评分直接暴露给展示层。
     return [
         {"title": result.get("title", ""), "url": result.get("url", "")}
         for result in results[:5]
@@ -53,6 +57,7 @@ def _public_web_sources(results: list[dict]) -> list[dict]:
 
 def _format_web_evidence(results: list[dict]) -> str:
     """把联网结果格式化为交叉验证提示词中的证据文本。"""
+    # 提示词中的证据包含标题、URL、相关度和摘要，便于模型区分来源而不是只看一段孤立文本。
     evidence = []
     for result in results[:5]:
         title = str(result.get("title") or "未命名网页").strip()
@@ -68,11 +73,13 @@ def _format_web_evidence(results: list[dict]) -> str:
         )
     if not evidence:
         return "未检索到相关联网证据"
+    # 即使每条结果已截断，仍对总证据做最后一道上限控制。
     return "\n\n".join(evidence)[:MAX_WEB_EVIDENCE_CHARS]
 
 
 def _tavily_error_message(error: Exception) -> str:
     """将 Tavily 的异常类型映射为不泄露内部细节的用户提示。"""
+    # 只向调用方返回可理解的类别，不把 Tavily SDK 的内部异常文本或敏感细节透出。
     error_name = type(error).__name__
     if error_name in {"InvalidAPIKeyError", "MissingAPIKeyError", "KeylessUnsupportedEndpointError"}:
         return "Tavily API Key 无效或已失效"
@@ -101,15 +108,19 @@ def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> list[di
         AnalysisCancelled: 任务在搜索前后被取消。
         RuntimeError: Tavily 返回网络、权限、额度或参数错误。
     """
+    # Key 必须由当前任务显式传入，不能回退到环境变量或其他任务的凭证。
     if not isinstance(tavily_api_key, str) or not tavily_api_key.strip():
         raise ValueError("未配置 Tavily API Key")
+    # 搜索属于耗时外部调用，开始前先响应取消信号，避免用户取消后仍发起请求。
     if is_cancelled(task_id):
         raise AnalysisCancelled(task_id)
 
     client = None
     try:
+        # 每条论据创建独立客户端并使用当前任务 Key，避免并发任务共享可变认证状态。
         client = TavilyClient(api_key=tavily_api_key.strip())
         response = client.search(
+            # 查询和结果数量均受限，防止长论据放大第三方请求成本。
             query=query[:MAX_WEB_QUERY_CHARS],
             search_depth="advanced",
             max_results=5,
@@ -123,12 +134,15 @@ def _web_search(query: str, task_id: str, tavily_api_key: str | None) -> list[di
     finally:
         if client is not None:
             try:
+                # SDK 支持关闭连接时及时释放资源；关闭失败不应覆盖原始搜索结果或异常。
                 client.close()
             except Exception:
                 pass
 
+    # 外部调用返回后再次检查取消，避免把用户已经取消的搜索结果继续送入模型。
     if is_cancelled(task_id):
         raise AnalysisCancelled(task_id)
+    # 统一清洗第三方字段后，再交给后面的提示词和前端结果处理。
     return _normalize_web_sources(response.get("results", []))
 
 
@@ -159,6 +173,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
         当前论文片段不会传给验证提示词，防止交叉验证把待验证材料当成自己的
         证据；参考资料和联网结果只按用户选择的模式与资料库范围加入。
     """
+    # quick 模式只验证本地知识和可选参考资料；deep 模式额外要求联网证据。
     quick_mode = mode == "quick"
     document_evidence_label = "模型自身知识判断要求"
     document_evidence = (
@@ -167,14 +182,17 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
     )
     local_evidence_summary_hint = "模型知识摘要"
     # 参考资料检索严格按资料库 ID 过滤；没有选择资料库时不访问向量服务。
+    # 参考资料检索按资料库 ID 做范围隔离，防止用户未选择的资料库参与结论。
     reference_results = search_reference_library(
         claim,
         reference_library_ids or [],
         vector_config=vector_config,
         top_k=3,
     )
+    # 参考片段只作为外部证据输入，不把当前论文片段传入，避免验证对象自证。
     reference_evidence = "\n".join(r["text"] for r in reference_results) or "未提供参考资料"
     # 快速模式的契约是跳过联网搜索，而不是用空结果伪装成搜索已完成。
+    # 快速模式明确跳过搜索；深度模式则在这里为当前论据单独执行一次搜索。
     web_results = [] if quick_mode else _web_search(claim, task_id, tavily_api_key)
     public_web_sources = _public_web_sources(web_results)
     web_evidence = "未执行联网验证（快速分析模式）" if quick_mode else _format_web_evidence(web_results)
@@ -186,6 +204,7 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
              "禁止把当前上传论文内容当作验证证据。"
     )
 
+    # 证据准备完成后才调用文本模型，让模型同时看到声明、证据来源和当前分析模式约束。
     llm = get_chat_model(text_config)
     text = stream_invoke(llm, CROSS_VALIDATION_PROMPT.format(
         claim=claim,
@@ -198,8 +217,10 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
     ), task_id, f"cross_validation_{idx}")
     from services import strip_markdown_json
     try:
+        # 先清理 Markdown 再校验固定结构，避免模型输出代码围栏导致整条结果失败。
         result = parse_and_validate(CrossValidationResult, strip_markdown_json(text))
     except ValueError:
+        # 单条结果解析失败时返回明确的“不可验证”，保留其他论据的并发结果。
         return {
             "claim": claim,
             "verification_status": "unverifiable",
@@ -212,12 +233,14 @@ def _validate_single_claim(claim: str, task_id: str, idx: int,
             "supplements": [],
             "conclusion": "本条交叉验证结果不可用，请重新分析",
         }
+    # 模型可能省略某些摘要字段，服务端补上可解释的默认值供前端稳定展示。
     if not result.get("local_evidence_summary"):
         result["local_evidence_summary"] = "已基于模型自身通用知识进行判断"
     if not result.get("reference_evidence_summary"):
         result["reference_evidence_summary"] = "未提供参考资料" if not reference_results else "已结合参考资料检索结果"
     if quick_mode and not result.get("web_evidence_summary"):
         result["web_evidence_summary"] = "未执行联网验证（快速分析模式）"
+    # 来源列表以服务端清洗后的结果为准，避免模型伪造或遗漏可追溯链接。
     result["web_sources"] = public_web_sources
     return result
 
@@ -250,14 +273,17 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
         RuntimeError: Tavily 搜索失败。
         AnalysisCancelled: 任务在任一论据核验过程中被取消。
     """
+    # deep 是默认模式；除 quick 外都必须提供 Key，防止未知模式意外绕过联网认证。
     if mode != "quick" and (
             not isinstance(tavily_api_key, str) or not tavily_api_key.strip()):
         raise ValueError("未配置 Tavily API Key")
+    # 优先核验论据步骤；如果模型没有拆出步骤，则退回核验总论点。
     claims = []
     for step in argument_chain.get("argument_chain", []):
         claims.append(step.get("claim", ""))
     if not claims and argument_chain.get("main_conclusion"):
         claims = [argument_chain["main_conclusion"]]
+    # 丢弃空声明并设置条数上限，避免一篇异常文档产生过多外部请求和模型调用。
     valid_claims = [c for c in claims if c][:100]
     if not valid_claims:
         return []
@@ -267,10 +293,12 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
     completed_count = 0
     if map_workers is None:
         raise ValueError("缺少数据库配置 mapWorkers")
+    # 并发数既不能为 0，也不应超过当前论据数量，避免创建无意义的线程。
     worker_count = max(1, min(map_workers, total))
 
     # 每条论据独立检索和调用模型；results 使用原始索引回填，保证返回顺序稳定。
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        # 保存 future 到原始索引的映射，后续按完成顺序收集但按输入顺序返回。
         futures = {
             executor.submit(
                 _validate_single_claim,
@@ -288,9 +316,11 @@ def cross_validate(argument_chain: dict, text_config: AIModelConfig,
         }
         for future in as_completed(futures):
             idx = futures[future]
+            # future.result() 会传播当前论据的取消或 Tavily 异常，保证失败不会被静默吞掉。
             results[idx] = future.result()
             completed_count += 1
             if on_progress:
+                # 交叉验证占 80%~95% 进度，消息中的完成数帮助前端解释并发任务状态。
                 label = "正在进行本地交叉验证" if mode == "quick" else "正在进行联网交叉验证"
                 on_progress(
                     80 + int((completed_count / total) * 15),

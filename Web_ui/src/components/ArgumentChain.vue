@@ -116,7 +116,7 @@ onMounted(async () => {
         </div>
         <div v-if="arg?.relation_to_next && arg.relation_to_next !== '无' && i < steps.length - 1"
           class="flex justify-center py-1">
-          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-text-muted">与下一论据的关系：{{ arg.relation_to_next }} ↓</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-text-muted">{{ arg.relation_to_next }} ↓</span>
         </div>
       </template>
     </div>

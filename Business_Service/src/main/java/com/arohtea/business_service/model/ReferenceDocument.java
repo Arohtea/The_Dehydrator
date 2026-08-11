@@ -14,8 +14,9 @@ import java.time.LocalDateTime;
 /**
  * 参考资料库中的文档元数据。
  *
- * <p>`sourceDocumentId` 非空时表示它是分析文档的自动归档镜像，MinIO 对象可与
- * 原始文档复用，但 Qdrant 向量使用独立的 AI 文档 ID。</p>
+ * <p>{@code sourceDocumentId} 为空时，这是一份用户独立上传的参考资料，自己拥有
+ * MinIO 对象和 AI 向量；非空时，它是分析文档的自动归档镜像，共享原文对象但使用
+ * 独立的 AI 文档 ID。这个区别决定删除时应该释放哪些资源。</p>
  */
 @Data
 @Entity
@@ -24,18 +25,28 @@ public class ReferenceDocument {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
+    /** 资料库页面使用的参考文档记录 ID。 */
     private String id;
 
+    /** 所属参考资料库 ID。 */
     private String libraryId;
+    /** 文件上传时的原始文件名。 */
     private String filename;
+    /** 用户在资料库中看到的名称，可独立于原始文件名修改。 */
     private String displayName;
+    /** 所属文件夹 ID，可为空表示未挂载目录。 */
     private String folderId;
+    /** 所属分类 ID，可为空表示未分类。 */
     private String categoryId;
+    /** 自动归档镜像对应的原始分析文档 ID，独立资料为空。 */
     private String sourceDocumentId;
+    /** MinIO 对象路径；镜像与原始文档可能共享该路径。 */
     private String minioPath;
+    /** 文件大小，用于资料库列表展示。 */
     private Long fileSize;
 
     @Column(columnDefinition = "TEXT")
+    /** AI Service 中该参考资料的向量文档 ID，向量化完成前为空。 */
     private String aiDocId;
 
     private LocalDateTime createdAt;

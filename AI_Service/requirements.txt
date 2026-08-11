@@ -55,7 +55,6 @@ orjson==3.11.7
 ormsgpack==1.12.2
 packaging
 pamqp==3.3.0
-pika==1.3.2
 portalocker==3.2.0
 propcache==0.4.1
 protobuf==6.33.5

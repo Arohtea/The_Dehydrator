@@ -26,6 +26,9 @@ import java.util.Map;
 
 /**
  * 管理员会话、CSRF Token 和当前身份接口。
+ *
+ * <p>登录成功后身份保存在服务端 Session，前端不需要保存 JWT；写请求还必须携带
+ * 与当前 Cookie 对应的 CSRF Token。这里不返回密码、哈希或任何可用于再次认证的凭据。</p>
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -60,19 +63,23 @@ public class AuthController {
             HttpServletRequest servletRequest,
             HttpServletResponse servletResponse) {
         try {
+            // AuthenticationManager 负责 BCrypt 校验，控制器只负责把 JSON 请求转换为认证对象。
             Authentication authentication = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(
                             request.username(), request.password()));
+            // 登录前销毁旧 Session，避免同一浏览器沿用不确定的历史会话状态。
             HttpSession existingSession = servletRequest.getSession(false);
             if (existingSession != null) {
                 existingSession.invalidate();
             }
+            // 把认证结果写入新的 SecurityContext，并交给 Session 仓库持久化。
             SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(authentication);
             SecurityContextHolder.setContext(context);
             securityContextRepository.saveContext(context, servletRequest, servletResponse);
             return ResponseEntity.ok(Map.of("authenticated", true, "username", authentication.getName()));
         } catch (AuthenticationException exception) {
+            // 对外统一返回凭据错误，不区分用户名不存在还是密码错误。
             SecurityContextHolder.clearContext();
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "用户名或密码错误"));

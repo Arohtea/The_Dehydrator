@@ -21,6 +21,7 @@ def get_client() -> QdrantClient:
     """
     global _client
     if _client is None:
+        # Qdrant 客户端延迟初始化并进程级复用，避免每次检索重新建立连接。
         _client = QdrantClient(
             host=settings.qdrant_host,
             port=settings.qdrant_http_port,
@@ -43,12 +44,15 @@ def ensure_collection(vector_size: int | None = None):
         集合维度一旦由模型确定就不能静默切换；发现维度、命名向量或集合类型
         不兼容时必须提示重建，避免写入后产生不可检索的数据。
     """
+    # 所有集合操作先取得共享客户端，避免不同函数创建不同连接配置。
     client = get_client()
     name = settings.qdrant_collection
     try:
+        # 首次写入时必须知道向量维度；只读检查没有维度时允许集合暂时不存在。
         if not client.collection_exists(name):
             if vector_size is None:
                 raise ValueError("向量集合不存在，无法确定向量维度")
+            # 集合按单一稠密向量和余弦距离创建，与 embed_texts 的输出契约一致。
             client.create_collection(
                 collection_name=name,
                 vectors_config=models.VectorParams(
@@ -56,24 +60,30 @@ def ensure_collection(vector_size: int | None = None):
                 ),
             )
         elif vector_size is not None:
+            # 已存在集合仍需验证维度，防止更换模型后写入无法被旧向量检索。
             collection = client.get_collection(name)
             vectors_config = collection.config.params.vectors
+            # None 表示集合没有可用稠密向量，命名向量则不符合当前单向量写入实现。
             if vectors_config is None:
                 raise ValueError("现有 Qdrant 集合未配置稠密向量，与当前模型不兼容；请先执行向量重建")
             if isinstance(vectors_config, dict):
                 raise ValueError("现有 Qdrant 集合使用命名向量，与当前单向量配置不兼容；请先执行向量重建")
             configured_size = vectors_config.size
+            # 维度不一致不能自动修复，必须让运维显式选择兼容模型或重建索引。
             if configured_size != vector_size:
                 raise ValueError(
                     f"向量模型输出维度为 {vector_size}，但现有 Qdrant 集合维度为 {configured_size}；"
                     "请使用兼容模型或先执行向量重建"
                 )
+        # 这些 payload 索引支撑删除、分析文档过滤和参考资料库过滤。
         client.create_payload_index(name, "doc_id", models.PayloadSchemaType.KEYWORD)
         client.create_payload_index(name, "source_type", models.PayloadSchemaType.KEYWORD)
         client.create_payload_index(name, "library_id", models.PayloadSchemaType.KEYWORD)
     except ValueError:
+        # 业务兼容性错误必须继续抛出，让上传/检索接口返回明确提示。
         raise
     except Exception as e:
+        # 基础设施暂不可用时记录告警；原有调用方会在真正读写时继续暴露失败。
         import logging
         logging.warning("ensure_collection 失败: %s", e)
 
@@ -85,6 +95,7 @@ def _analysis_document_filter(doc_id: str | None = None) -> models.Filter:
 
 def _reference_document_filter(library_ids: list[str]) -> models.Filter:
     """构造只匹配指定参考资料库的 Qdrant 过滤器。"""
+    # 同时限定来源类型和 library_id，防止参考资料检索误命中分析文档向量。
     return models.Filter(must=[
         models.FieldCondition(
             key="source_type",
@@ -99,6 +110,7 @@ def _reference_document_filter(library_ids: list[str]) -> models.Filter:
 
 def _document_filter(source_type: str, doc_id: str | None = None, library_id: str | None = None) -> models.Filter:
     """按来源类型及可选文档/资料库 ID 组合 Qdrant 条件。"""
+    # source_type 是所有查询的第一层边界，doc_id/library_id 是可选的第二层边界。
     must = [
         models.FieldCondition(
             key="source_type",
@@ -106,6 +118,7 @@ def _document_filter(source_type: str, doc_id: str | None = None, library_id: st
         )
     ]
     if doc_id:
+        # 分析文档详情只读当前文档自己的片段。
         must.append(
             models.FieldCondition(
                 key="doc_id",
@@ -113,6 +126,7 @@ def _document_filter(source_type: str, doc_id: str | None = None, library_id: st
             )
         )
     if library_id:
+        # 参考资料归档和检索只允许命中指定资料库。
         must.append(
             models.FieldCondition(
                 key="library_id",
@@ -145,9 +159,12 @@ def store_chunks(
         每个片段使用独立 UUID point ID，但通过 payload 中的 `doc_id` 形成逻辑
         文档边界，删除和检索都依赖该字段。
     """
+    # 先按请求快照生成向量；不同模型配置不会从环境变量或全局默认值回退。
     vectors = embed_texts(chunks, config=vector_config)
+    # 用实际输出维度校验 Qdrant 集合，避免在 upsert 后才发现索引不兼容。
     ensure_collection(len(vectors[0]) if vectors else None)
     client = get_client()
+    # point ID 是物理片段 ID，payload.doc_id 才是业务文档边界，删除依赖后者。
     points = [
         models.PointStruct(
             id=str(uuid.uuid4()),
@@ -161,6 +178,7 @@ def store_chunks(
         )
         for chunk, vec in zip(chunks, vectors)
     ]
+    # 一次写入整批片段，所有 point 都带有来源和资料库信息供后续过滤。
     client.upsert(settings.qdrant_collection, points)
 
 
@@ -174,6 +192,7 @@ def delete_by_doc_id(doc_id: str):
         删除按 payload 过滤而不是按 point ID 进行，因此一次调用能清理该文档
         的所有片段。
     """
+    # 删除不需要知道每个 point 的 UUID，只按业务 doc_id 过滤整份文档的所有片段。
     client = get_client()
     client.delete(
         settings.qdrant_collection,
@@ -203,12 +222,14 @@ def scroll_all(
     Raises:
         ValueError: 读取点数超过系统上限。
     """
+    # scroll 既用于读取分析文本，也用于带向量复制归档，因此统一走分页和上限保护。
     ensure_collection()
     client = get_client()
     points = []
     point_limit = max_points or settings.ai_max_chunks_per_document
     offset = None
     while True:
+        # Qdrant 返回一页数据和下一页 offset；持续读取直到 offset 为空。
         page, offset = client.scroll(
             collection_name=settings.qdrant_collection,
             scroll_filter=scroll_filter,
@@ -218,6 +239,7 @@ def scroll_all(
             with_vectors=with_vectors,
         )
         points.extend(page)
+        # 超过上限立即停止，避免异常大文档占满内存和线程池。
         if len(points) > point_limit:
             raise ValueError("向量片段数量超过系统上限")
         if offset is None:
@@ -239,6 +261,7 @@ def get_document_points(
     Returns:
         按 Qdrant 分页结果合并的 point 列表。
     """
+    # 通过统一 filter 读取，调用方无需分别处理 Qdrant 分页细节。
     return scroll_all(
         _document_filter(source_type, doc_id=doc_id),
         with_vectors=with_vectors,
@@ -263,16 +286,19 @@ def clone_analysis_document_to_reference(doc_id: str, library_id: str) -> tuple[
         复制时生成新的逻辑文档 ID 和 point ID，并将 `source_type` 与 `library_id`
         一并改写，保证后续参考资料检索不会命中原分析文档范围。
     """
+    # 复制前先确认集合和源文档存在；没有源向量时不能创建空的参考资料。
     ensure_collection()
     client = get_client()
     points = get_document_points(doc_id, source_type="analysis_document", with_vectors=True)
     if not points:
         raise ValueError("未找到可归档的分析文档向量")
 
+    # 参考资料必须拥有新的逻辑 ID，否则删除参考资料会误删原分析文档向量。
     new_doc_id = str(uuid.uuid4())
     cloned_points = []
     texts = []
     for point in points:
+        # 深复制 payload 后改写来源和资料库，保留原文文本与向量数值。
         payload = dict(point.payload or {})
         texts.append(payload.get("text", ""))
         payload["doc_id"] = new_doc_id
@@ -284,6 +310,7 @@ def clone_analysis_document_to_reference(doc_id: str, library_id: str) -> tuple[
             payload=payload,
         ))
 
+    # 所有克隆 point 准备完成后一次写入，避免只生成部分镜像。
     client.upsert(settings.qdrant_collection, cloned_points)
     return new_doc_id, texts
 
@@ -318,9 +345,11 @@ def search_similar_in_document(query: str, vector_config: AIModelConfig,
     Raises:
         ValueError: 模型输出维度与现有集合不兼容。
     """
+    # 查询文本使用与文档相同的显式向量模型，维度检查防止跨模型检索。
     vec = embed_query(query, config=vector_config)
     ensure_collection(len(vec))
     client = get_client()
+    # 同时限制最小值和系统最大值，避免 top_k=0 或超大查询消耗过多资源。
     bounded_top_k = min(max(top_k, 1), settings.ai_max_search_results)
     results = client.query_points(
         settings.qdrant_collection,
@@ -356,6 +385,7 @@ def search_reference_library(query: str, library_ids: list[str], vector_config: 
     Raises:
         ValueError: 模型输出维度与现有集合不兼容。
     """
+    # 未选择资料库时返回空结果，不访问向量模型或 Qdrant，快速模式可依赖这一点跳过检索。
     if not library_ids:
         return []
     vec = embed_query(query, config=vector_config)

@@ -13,6 +13,10 @@ import java.util.List;
 
 /**
  * 分析文档上传、查询和删除接口。
+ *
+ * <p>上传接口返回的是数据库元数据，不等待后台向量化；调用方应通过列表或详情
+ * 状态判断文档何时可以启动分析。删除接口则会等待活动分析任务安全收口后再清理
+ * 关联资源。</p>
  */
 @RestController
 @RequestMapping("/api/documents")
@@ -32,9 +36,11 @@ public class DocumentController {
     @PostMapping("/upload")
     public ResponseEntity<Document> upload(
             @RequestParam("file") MultipartFile file) throws Exception {
+        // 限流发生在读取文件和调用对象存储之前，拒绝请求时不产生外部资源。
         if (!requestRateLimiter.allowUpload()) {
             return ResponseEntity.status(429).build();
         }
+        // upload 只完成同步落盘，向量化在服务层后台执行，所以这里快速返回元数据。
         return ResponseEntity.ok(documentService.upload(file));
     }
 
@@ -70,6 +76,7 @@ public class DocumentController {
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable("id") String id) throws Exception {
+        // 服务层会先标记 deleting 并等待 AI Service 确认，控制器不直接删除任一存储。
         documentService.delete(id);
         return ResponseEntity.noContent().build();
     }

@@ -5,6 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from config.settings import settings
 from services.model_config import AIModelConfig
 
+# 同一配置复用客户端可以减少连接初始化；Key 包含三项，避免不同模型或 Key 串用。
 _embeddings: dict[tuple[str, str, str], OpenAIEmbeddings] = {}
 
 
@@ -26,8 +27,10 @@ def get_embeddings(config: AIModelConfig) -> OpenAIEmbeddings:
     """
     if config is None:
         raise ValueError("向量模型配置不能为空")
+    # 模型名、服务地址和凭证共同决定向量语义，任何一项变化都必须创建新客户端。
     cache_key = (config.model, config.url, config.api_key)
     if cache_key not in _embeddings:
+        # 使用请求级配置创建 OpenAI 兼容客户端，不读取其他环境中的隐式模型设置。
         _embeddings[cache_key] = OpenAIEmbeddings(
             model=config.model,
             base_url=config.url,
@@ -47,6 +50,7 @@ def embed_texts(texts: list[str], config: AIModelConfig) -> list[list[float]]:
     Returns:
         与输入顺序一致的向量列表。
     """
+    # LangChain 保持输入顺序返回向量，调用方可以按同一索引把向量和文本片段写入 Qdrant。
     return get_embeddings(config).embed_documents(texts)
 
 
@@ -60,4 +64,5 @@ def embed_query(text: str, config: AIModelConfig) -> list[float]:
     Returns:
         用于相似度检索的向量。
     """
+    # 查询向量必须由与资料入库兼容的配置生成，否则维度或语义不一致会导致检索失败。
     return get_embeddings(config).embed_query(text)

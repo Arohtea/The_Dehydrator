@@ -23,8 +23,11 @@ async def require_service_token(
         使用常量时间比较降低令牌比较产生时序侧信道的风险；该依赖挂在路由
         级别，因此所有文档和分析接口都会经过同一认证入口。
     """
+    # 期望值来自 AI Service 自己的受保护配置，不接受调用方通过请求覆盖。
     expected = settings.internal_service_token
+    # 缺少服务端配置、请求 Header 或校验不一致都按同一个 401 返回，避免泄露失败原因。
     if not expected or not token or not compare_digest(token, expected):
+        # compare_digest 让字符串比较尽量使用常量时间，降低令牌长度信息被推测的风险。
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="内部服务认证失败",

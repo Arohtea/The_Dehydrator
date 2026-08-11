@@ -13,6 +13,9 @@ import java.time.LocalDateTime;
 
 /**
  * 资料库分类；同一资料库内名称唯一。
+ *
+ * <p>分类和文件夹都是资料的组织标签，但分类可以表达跨文件夹的主题关系；资料
+ * 通过 categoryId 引用它，删除前必须先解除所有引用。</p>
  */
 @Data
 @Entity
@@ -26,8 +29,11 @@ public class ReferenceCategory {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
+    /** 父资料库 ID。 */
     private String libraryId;
+    /** 分类展示名称，同一资料库内不可重复。 */
     private String name;
+    /** 分类首次创建时间，用于稳定排序。 */
     private LocalDateTime createdAt;
 
     /**

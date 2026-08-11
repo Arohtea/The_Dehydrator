@@ -19,7 +19,8 @@ import java.util.Objects;
  * 分析任务创建、查询和取消接口。
  *
  * <p>控制器只做请求格式和 HTTP 状态码适配，任务并发、配置快照和状态迁移由
- * `AnalysisService` 负责。</p>
+ * {@link AnalysisService} 负责。这样 HTTP 层不直接操作任务状态，也不会绕过行锁
+ * 启动或取消远程分析。</p>
  */
 @RestController
 @RequestMapping("/api/analysis")
@@ -39,9 +40,11 @@ public class AnalysisController {
      */
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody Map<String, Object> body) {
+        // Map 请求体允许前端传入任意 JSON，先把关键字段收敛成服务层认识的类型。
         String docId = body.get("documentId") instanceof String value ? value : null;
         String mode = body.get("mode") instanceof String value ? value : "deep";
         List<String> referenceLibraryIds = extractStringList(body.get("referenceLibraryIds"));
+        // 参考库数量上限保护后续检索和消息体大小，超过时无需进入数据库事务。
         if (referenceLibraryIds.size() > 50) {
             return ResponseEntity.unprocessableEntity()
                     .body(Map.of("error", "参考资料集数量不能超过 50"));
@@ -50,6 +53,7 @@ public class AnalysisController {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "documentId不能为空"));
         }
+        // 先给出明确的文档状态响应，避免让服务层用同一个异常表示“不存在”和“向量未完成”。
         Document doc = documentService.getById(docId);
         if (doc == null) {
             return ResponseEntity.badRequest()
@@ -59,18 +63,22 @@ public class AnalysisController {
             return ResponseEntity.status(202)
                     .body(Map.of("error", "文档正在向量化，请稍后再试"));
         }
+        // 只有文档存在且已准备好向量后才消耗分析额度，查询失败不会浪费令牌。
         if (!requestRateLimiter.allowAnalysisStart()) {
             return ResponseEntity.status(429)
                     .body(Map.of("error", "分析请求过于频繁"));
         }
         try {
+            // 具体的并发锁、模型快照和 RabbitMQ 事件由服务层完成。
             AnalysisTask task = analysisService.createTask(
                     docId, mode, referenceLibraryIds);
             return ResponseEntity.ok(AnalysisTaskResponse.from(task, objectMapper));
         } catch (IllegalArgumentException exception) {
+            // 参数或配置问题用 422，前端应修改请求或设置后再提交。
             return ResponseEntity.unprocessableEntity()
                     .body(Map.of("error", exception.getMessage()));
         } catch (IllegalStateException exception) {
+            // 资源未就绪或并发额度已满使用 429，表示稍后重试可能成功。
             return ResponseEntity.status(429)
                     .body(Map.of("error", exception.getMessage()));
         }

@@ -11,6 +11,9 @@ import java.util.Optional;
 
 /**
  * 分析文档数据访问接口。
+ *
+ * <p>普通查询用于读取列表和详情；带悲观写锁的查询用于删除、向量回写和分析启动
+ * 之间的互斥，保证文档的 deleting 标志和 aiDocId 不会被旧异步操作覆盖。</p>
  */
 public interface DocumentRepository extends JpaRepository<Document, String> {
 

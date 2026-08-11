@@ -19,14 +19,10 @@ public record SystemSettingsUpdate(
         @Min(0) @Max(8000) Integer chunkOverlap) {
 
     /**
-     * 设置页提交的单个模型配置。
-     *
-     * @param model 模型名称
-     * @param url OpenAI 兼容接口根地址
-     * @param apiKey API Key，留空表示保持原值
-     */
-    /**
      * 单个文本模型或向量模型的更新字段。
+     *
+     * <p>该对象中的空字段不是“清空”，而是“保留数据库原值”；完整性和掩码 Key
+     * 检查由 SystemSettingsService 执行。</p>
      *
      * @param model 模型名称
      * @param url OpenAI 兼容接口根地址

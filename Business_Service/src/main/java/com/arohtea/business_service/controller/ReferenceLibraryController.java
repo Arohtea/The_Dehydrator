@@ -26,7 +26,8 @@ import java.util.Map;
  * 参考资料库、目录和参考文档的 HTTP 接口。
  *
  * <p>控制器统一把目录冲突映射为 409，把输入校验错误映射为 400，并在上传入口
- * 使用共享限流器保护对象存储和向量化资源。</p>
+ * 使用共享限流器保护对象存储和向量化资源。上传只返回元数据，向量化状态由
+ * {@link ReferenceLibraryService} 异步回写。</p>
  */
 @RestController
 @RequestMapping("/api")
@@ -45,6 +46,7 @@ public class ReferenceLibraryController {
     @PostMapping("/reference-libraries")
     public ResponseEntity<?> createLibrary(@RequestBody Map<String, String> body) {
         try {
+            // 服务层负责名称清洗和数据库保存，控制器只把结果包装为 HTTP 响应。
             ReferenceLibrary library = referenceLibraryService.createLibrary(body.get("name"));
             return ResponseEntity.ok(library);
         } catch (IllegalArgumentException e) {
@@ -86,6 +88,7 @@ public class ReferenceLibraryController {
      */
     @GetMapping("/reference-libraries/{id}/documents")
     public ResponseEntity<?> listDocuments(@PathVariable("id") String id) {
+        // 先明确区分“资料库不存在”和“资料库为空”，避免返回一个看似成功的空列表。
         if (referenceLibraryService.getLibrary(id) == null) {
             return ResponseEntity.notFound().build();
         }
@@ -238,10 +241,12 @@ public class ReferenceLibraryController {
     public ResponseEntity<?> uploadDocument(
             @PathVariable("id") String id,
             @RequestParam("file") MultipartFile file) throws Exception {
+        // 上传前限流，拒绝请求时不会读取文件或写入 MinIO。
         if (!requestRateLimiter.allowUpload()) {
             return ResponseEntity.status(429).body(Map.of("error", "上传请求过于频繁"));
         }
         try {
+            // 同步返回未完成向量化的元数据；前端后续根据 aiDocId/状态刷新。
             ReferenceDocument document = referenceLibraryService.uploadDocument(id, file);
             return ResponseEntity.ok(document);
         } catch (IllegalArgumentException e) {
@@ -284,6 +289,7 @@ public class ReferenceLibraryController {
     @DeleteMapping("/reference-documents/{id}")
     public ResponseEntity<?> deleteDocument(@PathVariable("id") String id) throws Exception {
         try {
+            // 删除是否为自动归档镜像由服务层判断，控制器不直接删除共享对象。
             referenceLibraryService.deleteDocument(id);
             return ResponseEntity.noContent().build();
         } catch (IllegalStateException exception) {

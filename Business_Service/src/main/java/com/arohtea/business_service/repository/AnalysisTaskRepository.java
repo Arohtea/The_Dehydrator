@@ -27,16 +27,38 @@ public interface AnalysisTaskRepository extends JpaRepository<AnalysisTask, Stri
     @Query("select t from AnalysisTask t where t.id = :id")
     Optional<AnalysisTask> findByIdForUpdate(@Param("id") String id);
 
-    /** @param documentId 文档 ID @return 按创建时间升序排列的任务 */
+    /**
+     * 查询文档的完整任务历史。
+     *
+     * @param documentId 文档 ID
+     * @return 按创建时间升序排列的任务
+     */
     List<AnalysisTask> findByDocumentIdOrderByCreatedAtAsc(String documentId);
 
-    /** @param statuses 待匹配状态 @param before 创建时间上限 @return 超时候选任务 */
+    /**
+     * 查询定时清理的超时候选任务；调用方仍需重新加锁确认状态。
+     *
+     * @param statuses 待匹配状态
+     * @param before 创建时间上限
+     * @return 超时候选任务
+     */
     List<AnalysisTask> findByStatusInAndCreatedAtBefore(List<TaskStatus> statuses, LocalDateTime before);
 
-    /** @param statuses 活动状态集合 @return 当前活动任务数 */
+    /**
+     * 统计占用全局分析名额的任务。
+     *
+     * @param statuses 活动状态集合
+     * @return 当前活动任务数
+     */
     long countByStatusIn(List<TaskStatus> statuses);
 
-    /** @param documentId 文档 ID @param statuses 活动状态集合 @return 文档活动任务 */
+    /**
+     * 查询文档下仍未收口的任务。
+     *
+     * @param documentId 文档 ID
+     * @param statuses 活动状态集合
+     * @return 文档活动任务
+     */
     List<AnalysisTask> findByDocumentIdAndStatusIn(String documentId, List<TaskStatus> statuses);
 
     /**
@@ -52,9 +74,19 @@ public interface AnalysisTaskRepository extends JpaRepository<AnalysisTask, Stri
             @Param("documentId") String documentId,
             @Param("statuses") List<TaskStatus> statuses);
 
-    /** @param documentId 文档 ID @return 最新任务 */
+    /**
+     * 获取文档列表需要展示的最新一条任务。
+     *
+     * @param documentId 文档 ID
+     * @return 最新任务
+     */
     Optional<AnalysisTask> findFirstByDocumentIdOrderByCreatedAtDesc(String documentId);
 
-    /** @param documentId 文档 ID @return 被删除的任务数量 */
+    /**
+     * 删除文档已经完成清理的历史任务。
+     *
+     * @param documentId 文档 ID
+     * @return 被删除的任务数量
+     */
     long deleteByDocumentId(String documentId);
 }

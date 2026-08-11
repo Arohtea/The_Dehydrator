@@ -20,8 +20,10 @@ def get_chat_model(config: AIModelConfig, streaming: bool = True, **kwargs) -> C
     Raises:
         ValueError: 未提供文本模型配置。
     """
+    # 不允许回退到环境变量或默认模型，避免不同用户的分析任务相互串配置。
     if config is None:
         raise ValueError("文本模型配置不能为空")
+    # 每次按请求配置创建客户端；streaming 由调用场景决定，分析流程默认开启流式输出。
     return ChatOpenAI(
         model=config.model,
         base_url=config.url,

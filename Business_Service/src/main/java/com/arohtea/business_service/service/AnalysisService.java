@@ -28,16 +28,26 @@ import java.util.stream.Collectors;
 /**
  * 分析任务的创建、取消、超时清理和删除协同服务。
  *
- * <p>任务状态与文档删除状态分别保存在数据库和 Redis 中，数据库行锁负责
- * 串行化竞争请求，Redis 取消键负责把停止信号传递给 AI Service。</p>
+ * <p>一次分析会同时经过三个系统：数据库保存任务状态和最终结果，RabbitMQ
+ * 负责把任务交给 AI Service，Redis 保存取消信号和供前端回放的实时事件。这里
+ * 负责把三者串起来，并用数据库行锁保证“启动、取消、超时、结果回写”不会同时
+ * 修改同一条任务记录。</p>
+ *
+ * <p>任务创建时只先写入 {@code PENDING}，事务提交后才发送消息；AI Service
+ * 确认收到并开始处理后才进入 {@code PROCESSING}。取消也不是立即写成最终状态，
+ * 而是先进入 {@code CANCELLING}，等待外部服务确认后才进入 {@code CANCELLED}，
+ * 这样不会把仍在运行的模型调用误认为已经停止。</p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AnalysisService {
 
+    /** 仍然占用分析名额，且不允许文档被彻底删除的状态。 */
     private static final List<TaskStatus> ACTIVE_STATUSES = List.of(
             TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.CANCELLING);
+
+    /** 可能因长时间没有结果而被定时任务判定为超时的状态。 */
     private static final List<TaskStatus> RUNNING_STATUSES = List.of(
             TaskStatus.PENDING, TaskStatus.PROCESSING);
 
@@ -64,6 +74,9 @@ public class AnalysisService {
     /**
      * 将外部模式值收敛到系统支持的两个模式。
      *
+     * <p>前端可以不传模式，历史客户端也可能传入未知值。为了保持兼容，只有明确
+     * 写成 {@code quick} 时才走快速分析，其他情况统一按功能更完整的深度分析处理。</p>
+     *
      * @param mode 请求传入的模式，可能为空或大小写不一致
      * @return `quick` 或 `deep`；除 quick 外的值统一按 deep 处理
      */
@@ -73,6 +86,14 @@ public class AnalysisService {
 
     /**
      * 在文档行锁保护下创建分析任务，并在事务提交后投递消息。
+     *
+     * <p>处理顺序对应用户看到的“开始分析”动作：先锁定文档并确认文档可用，再
+     * 检查同一文档和全局的并发限制，随后冻结本次任务所需的模型、参考资料库名称
+     * 和搜索配置。最后才保存任务并发布领域事件；事件监听器会在事务提交后将消息
+     * 发给 AI Service。</p>
+     *
+     * <p>配置被复制到消息中而不是让 AI Service 临时读取，是为了保证用户在分析
+     * 过程中修改设置时，正在运行的任务仍使用创建时的完整配置。</p>
      *
      * @param documentId 业务文档 ID
      * @param mode 分析模式，quick 或 deep
@@ -84,6 +105,7 @@ public class AnalysisService {
      */
     @Transactional
     public AnalysisTask createTask(String documentId, String mode, List<String> referenceLibraryIds) {
+        // 先锁文档，和删除流程使用同一把数据库行锁，避免“刚检查完可用就被删除”。
         Document document = documentRepository.findByIdForUpdate(documentId).orElse(null);
         if (document == null) {
             throw new IllegalArgumentException("文档不存在");
@@ -91,20 +113,24 @@ public class AnalysisService {
         if (document.isDeleting()) {
             throw new AnalysisConflictException("文档正在删除，不能启动分析");
         }
+        // 没有 AI 文档 ID 说明后台向量化尚未完成；没有向量就无法被分析模型检索。
         if (document.getAiDocId() == null || document.getAiDocId().isBlank()) {
             throw new IllegalStateException("文档正在向量化，请稍后再试");
         }
 
-        // 文档行锁和活动任务检查共同保证同一文档不会并发创建多个分析任务。
+        // 文档行锁挡住同一文档的竞争请求，活动任务检查挡住已经存在的历史任务。
+        // 两层检查一起保证同一文档不会因为重复点击而创建多个并行分析。
         List<AnalysisTask> documentTasks = taskRepository.findByDocumentIdAndStatusIn(
                 documentId, ACTIVE_STATUSES);
         if (!documentTasks.isEmpty()) {
             throw new AnalysisConflictException("该文档已有分析任务正在运行");
         }
+        // 这是全局上限，不按用户区分；模型调用成本和机器资源由整个服务共同承担。
         if (taskRepository.countByStatusIn(ACTIVE_STATUSES) >= maxConcurrentTasks) {
             throw new IllegalStateException("当前同时运行的分析任务已达到上限");
         }
 
+        // 读取一次设置并在本次任务中复用，避免文本模型、向量模型和搜索 Key 来自不同时间点。
         String normalizedMode = normalizeMode(mode);
         var settings = settingsService.get();
         var textModel = settingsService.requireTextModelConfig(settings);
@@ -114,6 +140,7 @@ public class AnalysisService {
             throw new IllegalArgumentException("深度分析需要先在设置中配置 Tavily API Key");
         }
 
+        // 先清洗 ID，再查询名称；查询名称既验证 ID 存在，也为历史任务保存可读快照。
         List<String> normalizedLibraryIds = normalizeReferenceLibraryIds(referenceLibraryIds);
         List<String> referenceLibraryNames = resolveReferenceLibraryNames(normalizedLibraryIds);
 
@@ -125,8 +152,11 @@ public class AnalysisService {
         task.setReferenceLibraryNames(writeJsonList(referenceLibraryNames));
         task.setStatus(TaskStatus.PENDING);
         task.setCurrentStep("等待提交分析任务");
+        // 必须先把任务真正写入数据库，事务提交后的消息消费者才能查到它。
         task = taskRepository.saveAndFlush(task);
 
+        // 事件不是立即发送 RabbitMQ，而是交给 AFTER_COMMIT 监听器处理，避免事务回滚后
+        // AI Service 仍收到一条数据库中不存在的任务消息。
         eventPublisher.publishEvent(new AnalysisTaskCreatedEvent(
                 task.getId(),
                 buildRequestMessage(task, document, normalizedLibraryIds, textModel, vectorModel, settings)
@@ -157,6 +187,10 @@ public class AnalysisService {
     /**
      * 写入协作式取消信号并进入终止中状态，只有 AI Service 确认后才进入 CANCELLED。
      *
+     * <p>取消请求只改变任务的协调状态，不直接终止远程 HTTP/模型调用。AI Service
+     * 会在处理过程中读取 Redis 取消键，完成清理后通过 RabbitMQ 回传确认；结果监听器
+     * 再把任务收口为最终的 {@code CANCELLED}。</p>
+     *
      * @param taskId 任务 ID
      * @return 当前任务，不存在时返回 null
      */
@@ -166,6 +200,7 @@ public class AnalysisService {
         if (task == null) {
             return null;
         }
+        // 已完成、已失败或已取消的任务没有远程工作需要停止，重复取消直接返回当前状态。
         if (!ACTIVE_STATUSES.contains(task.getStatus())) {
             return task;
         }
@@ -175,6 +210,10 @@ public class AnalysisService {
 
     /**
      * 标记文档进入删除流程，并为该文档所有活动任务写入取消信号。
+     *
+     * <p>设置 {@code deleting=true} 是删除流程的闸门：后续启动分析和迟到的向量回写
+     * 都会被拒绝。之后锁定该文档的活动任务并逐个发出取消信号，确保删除和任务状态
+     * 迁移按照数据库顺序执行。</p>
      *
      * @param documentId 文档 ID
      * @return 文档存在时返回 true，不存在时返回 false
@@ -197,17 +236,14 @@ public class AnalysisService {
     }
 
     /**
-     * 等待 AI Service 对文档下所有活动任务发送取消确认。
-     *
-     * @param documentId 文档 ID
-     * @return 在等待上限内所有任务都已离开活动状态时返回 true
-     */
-    /**
      * 在有限等待窗口内轮询文档活动任务是否全部收口。
      *
+     * <p>活动任务从查询结果中消失，表示结果监听器已经收到取消确认或消息投递失败
+     * 已被安全收口。只有确认收口后，调用方才可以删除数据库、对象存储和向量；否则
+     * 删除会留下仍在运行的远程任务和无法回收的资源。</p>
+     *
      * @param documentId 文档 ID
-     * @return 在截止时间前活动任务为空时返回 true；线程被中断或仍有活动任务
-     *         时返回 false
+     * @return 在截止时间前活动任务为空时返回 true；线程被中断或仍有活动任务时返回 false
      */
     public boolean awaitCancellation(String documentId) {
         long deadline = System.nanoTime() + Duration.ofMillis(cancelWaitMs).toNanos();
@@ -215,6 +251,7 @@ public class AnalysisService {
             if (taskRepository.findByDocumentIdAndStatusIn(documentId, ACTIVE_STATUSES).isEmpty()) {
                 return true;
             }
+            // 数据库是取消确认的事实来源，短暂轮询可以避免删除请求一直占用事务连接。
             try {
                 Thread.sleep(250L);
             } catch (InterruptedException exception) {
@@ -227,6 +264,9 @@ public class AnalysisService {
 
     /**
      * 删除文档成功后清理该文档的历史任务、取消键和事件流。
+     *
+     * <p>先删除并 flush 数据库任务记录，再删除 Redis 中的取消键和 Stream。这样
+     * 后续查询不会再看到历史任务，同时也不会保留已经删除文档的实时事件。</p>
      *
      * @param documentId 文档 ID
      */
@@ -242,20 +282,20 @@ public class AnalysisService {
     }
 
     /**
-     * 将超过部署超时阈值的未完成任务置为终止中并发布取消信号。
+     * 定期收口超过超时阈值的 {@code PENDING}/{@code PROCESSING} 任务。
+     *
+     * <p>第一次查询只找出候选任务，真正更新前会重新加行锁并再次检查状态，因为
+     * 候选列表生成后，结果消息可能已经把任务改成终态。超时只代表 Business Service
+     * 没有在预期时间内看到结果，不代表远程模型已经停止，所以这里只发送取消信号并
+     * 写成 {@code CANCELLING}，不能直接写成 {@code CANCELLED}。</p>
      */
     @Scheduled(fixedRateString = "${analysis.task-cleanup-interval-ms}")
     @Transactional
-    /**
-     * 将超过超时阈值的 PENDING/PROCESSING 任务转为 CANCELLING。
-     *
-     * 超时任务仍需等待 AI Service 确认，不能直接写成 CANCELLED，否则可能把
-     * 仍在运行的外部模型调用误认为已经停止。
-     */
     public void cleanupTimedOutTasks() {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(taskTimeoutMinutes);
         List<AnalysisTask> stale = taskRepository.findByStatusInAndCreatedAtBefore(RUNNING_STATUSES, threshold);
         for (AnalysisTask candidate : stale) {
+            // 重新加锁是为了防止定时清理覆盖刚刚到达的成功、失败或取消确认消息。
             AnalysisTask task = taskRepository.findByIdForUpdate(candidate.getId()).orElse(null);
             if (task == null) {
                 continue;
@@ -272,7 +312,10 @@ public class AnalysisService {
     }
 
     /**
-     * 写入取消信号并把可取消状态迁移到 CANCELLING。
+     * 写入取消信号并把可取消状态迁移到 {@code CANCELLING}。
+     *
+     * <p>Redis 键负责通知 AI Service，数据库状态负责通知前端和其他 Business Service
+     * 请求。两者必须在同一次业务操作中更新，才能让“正在终止”在各个入口保持一致。</p>
      *
      * @param task 已在当前事务中读取的任务实体
      */
@@ -287,6 +330,9 @@ public class AnalysisService {
     /**
      * 写入带 TTL 的协作式取消键，供 AI Service 在流式调用中定期读取。
      *
+     * <p>TTL 防止服务异常退出后留下永久取消标记；键值本身只表达“需要停止”，
+     * 不携带业务内容，具体取消哪个任务由键名中的任务 ID 确定。</p>
+     *
      * @param taskId 分析任务 ID
      */
     private void requestCancellationSignal(String taskId) {
@@ -296,6 +342,10 @@ public class AnalysisService {
 
     /**
      * 组装 RabbitMQ 分析请求的跨服务 JSON 消息。
+     *
+     * <p>消息把一次任务所需的输入和配置完整打包：AI 文档 ID 用于检索向量，文本/向量
+     * 模型用于调用外部模型，参考资料库 ID 用于交叉验证。深度模式才携带 Tavily Key，
+     * 因此快速模式不会无谓地传递联网搜索凭据。</p>
      *
      * @param task 任务实体
      * @param document 业务文档实体
@@ -319,6 +369,7 @@ public class AnalysisService {
             msg.put("docId", document.getAiDocId());
             msg.put("mode", task.getMode());
             msg.set("referenceLibraryIds", objectMapper.valueToTree(referenceLibraryIds));
+            // Key 只存在于跨服务内部消息中，日志和对外响应都不打印这段 JSON。
             ObjectNode textConfig = msg.putObject("textModel");
             textConfig.put("model", textModel.model());
             textConfig.put("url", textModel.url());
