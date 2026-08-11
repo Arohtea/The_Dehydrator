@@ -133,7 +133,7 @@ flowchart TD
     M1 --> P1[PostgreSQL 保存 documents]
     P1 --> A0[创建分析资料库镜像 reference_documents]
     A0 --> R1[异步调用 AI Service /api/document/upload]
-    R1 --> A1[解析 PDF / DOCX / TXT]
+    R1 --> A1[解析 PDF / DOCX / TXT<br/>原生文字提取 + 必要时 OCR 补充中英文图片文字]
     A1 --> A2[按 chunk_size / chunk_overlap 切分]
     A2 --> A3[调用设置页指定的向量模型生成向量]
     A3 --> Q1[写入 Qdrant dehydrator_docs]
