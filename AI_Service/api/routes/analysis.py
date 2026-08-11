@@ -1,7 +1,8 @@
 """分析相关 HTTP 接口。
 
 路由层只负责校验请求、读取 Qdrant 文档片段并组装模型配置；论据链、漏洞检测
-和交叉验证的实际执行分别委托给 `services` 中的业务函数。
+和交叉验证的实际执行分别委托给 `services` 中的业务函数。逻辑漏洞接口只消费
+调用方已经生成的论据链，不重复执行论据提取。
 """
 
 from typing import Annotated, Literal
@@ -13,6 +14,7 @@ from services.argument_chain import extract_argument_chain
 from services.logic_flaw import detect_logic_flaws
 from services.cross_validation import cross_validate
 from services.model_config import parse_header_model_config
+from services.output_models import ArgumentChainResult
 from services.vector_store import get_document_points
 
 router = APIRouter()
@@ -30,6 +32,13 @@ class AnalysisRequest(BaseModel):
     reference_library_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
         default_factory=list, max_length=50
     )
+
+
+class LogicFlawRequest(BaseModel):
+    """基于已生成论据链执行逻辑漏洞检测的请求模型。"""
+
+    doc_id: str = Field(min_length=1, max_length=100)
+    argument_chain: ArgumentChainResult
 
 
 def _get_chunks(doc_id: str) -> list[str]:
@@ -95,38 +104,26 @@ async def argument_chain(
 @router.post("/logic-flaws")
 async def logic_flaws(
         request: Request,
-        req: AnalysisRequest,
-        x_map_workers: int = Header(...)):
-    """提取论据链并检测逻辑漏洞。
+        req: LogicFlawRequest):
+    """使用调用方已生成的论据链检测逻辑漏洞。
 
     Args:
         request: 包含文本模型配置 Header 的请求。
-        req: 分析文档标识。
-        x_map_workers: 数据库传入的并发数。
+        req: 分析文档标识和已完成结构化的论据链。
 
     Returns:
         文档 ID 与逻辑漏洞结果。
 
     Raises:
-        HTTPException: 文档不存在、模型 Header 无效或文档没有可分析内容时返回
-            对应的 HTTP 错误。
+        HTTPException: 模型 Header 无效时返回对应的 HTTP 错误。
     """
-    # 逻辑漏洞依赖完整论据链，因此先复用同样的文档读取和空文档检查。
-    chunks = _get_chunks(req.doc_id)
-    if not chunks:
-        raise HTTPException(404, "未找到该文档的内容")
     try:
-        # 提取论据链和检测漏洞必须使用同一份文本模型配置，结果才具有可比性。
+        # 漏洞检测使用调用方生成论据链时对应的文本模型配置，保证结果可复现。
         text_config = parse_header_model_config(request.headers, "X-Text", "文本模型")
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    chain = extract_argument_chain(
-        chunks,
-        text_config=text_config,
-        map_workers=x_map_workers,
-    )
-    # 第二步在论据链基础上定位漏洞；不重新读取原文，保证漏洞位置对应同一批步骤。
-    flaws = detect_logic_flaws(chain, text_config=text_config)
+    # 请求模型已校验论据链结构；这里直接复用它，避免重新读取文档和调用 MAP/REDUCE。
+    flaws = detect_logic_flaws(req.argument_chain.model_dump(mode="json"), text_config=text_config)
     return {"doc_id": req.doc_id, "logic_flaws": flaws}
 
 
