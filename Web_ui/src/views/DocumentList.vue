@@ -264,7 +264,7 @@ async function refreshActiveDocuments() {
     </div>
 
     <div v-else-if="documents.length === 0" class="text-center py-20 text-text-muted gs-doc-item opacity-0">
-      暂无文档，请先上传
+      还没有文档，先上传一份吧
     </div>
 
     <div v-else class="space-y-3">
