@@ -531,7 +531,7 @@ function stageStatus(stage) {
     </div>
 
     <div v-else-if="!currentTask" class="text-center py-20 text-text-muted">
-      该文档暂无分析任务
+      这份文档还没有分析任务
     </div>
 
     <template v-else>
