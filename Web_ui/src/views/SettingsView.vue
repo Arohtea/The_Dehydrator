@@ -234,7 +234,7 @@ async function onSave() {
       <div class="flex items-center gap-3 pt-1 gs-setting-item opacity-0">
         <button @click="onSave" :disabled="saving"
           class="bg-primary text-white px-5 py-2 rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors">
-          {{ saving ? '保存中...' : '保存设置' }}
+          {{ saving ? '保存中…' : '保存设置' }}
         </button>
         <span v-if="msg" class="text-sm" :class="msg === '保存成功' ? 'text-green-600' : 'text-red-500'">{{ msg }}</span>
       </div>
